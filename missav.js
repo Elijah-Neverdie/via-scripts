@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.9
+// @version      1.4.0
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 6) return;
-    window.__viaMissavGestureHook = 6;
+    if (window.__viaMissavGestureHook === 7) return;
+    window.__viaMissavGestureHook = 7;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -573,12 +573,13 @@
         ".plyr.via-ui-on.plyr--hide-controls .plyr__controls[hidden]{" +
         "display:flex!important;opacity:1!important;visibility:visible!important;" +
         "pointer-events:auto!important;transform:none!important;translate:none!important;}" +
-        "#via-missav-hud{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:hidden;}" +
+        "#via-missav-hud{position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden;transform:translateZ(0);}" +
         "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:33.333%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
         "#via-missav-hud .via-side.left{left:0;}" +
         "#via-missav-hud .via-side.right{left:66.667%;}" +
-        "#via-missav-hud .via-side.on{opacity:1;animation:via-seek-fade .8s ease forwards;}" +
-        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;font-size:32px;font-weight:700;letter-spacing:.04em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.7);}" +
+        "#via-missav-hud .via-side.on{opacity:1!important;visibility:visible!important;animation:via-seek-fade .9s ease forwards;}" +
+        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;font-size:34px;font-weight:800;letter-spacing:.04em;line-height:1;" +
+        "padding:10px 16px;border-radius:10px;background:rgba(0,0,0,.48);text-shadow:0 2px 10px rgba(0,0,0,.7);}" +
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
         "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
@@ -695,9 +696,9 @@
       var flash;
       removeLegacyLayer();
       if (!isWatchPage()) return null;
-      host = videoHost();
-      root = plyrEl() || playerRoot();
-      if (!host || !root) return null;
+      host = plyrEl() || playerRoot();
+      root = host;
+      if (!host) return null;
       if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
         host.style.position = "relative";
       }
@@ -853,17 +854,25 @@
       amount = SEEK * seekStreak;
       panel = wrap.querySelector(".via-side." + side);
       face = panel && panel.querySelector(".via-face");
-      if (face) face.textContent = (side === "left" ? "-" : "+") + amount + "s";
+      if (face) {
+        face.textContent = (side === "left" ? "-" : "+") + amount + "秒";
+        face.style.setProperty("opacity", "1", "important");
+        face.style.setProperty("visibility", "visible", "important");
+      }
       sides = wrap.querySelectorAll(".via-side");
       for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
       if (panel) {
         void panel.offsetWidth;
         panel.classList.add("on");
+        panel.style.setProperty("opacity", "1", "important");
       }
       if (sideTimer) window.clearTimeout(sideTimer);
       sideTimer = window.setTimeout(function () {
         sides = wrap.querySelectorAll(".via-side");
-        for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
+        for (s = 0; s < sides.length; s++) {
+          sides[s].classList.remove("on");
+          sides[s].style.removeProperty("opacity");
+        }
       }, 750);
       if (seekTimer) window.clearTimeout(seekTimer);
       seekTimer = window.setTimeout(function () {
@@ -995,10 +1004,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "6") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "7") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "6");
+      document.documentElement.setAttribute("data-via-missav-gesture", "7");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
@@ -1072,11 +1081,14 @@
   }
 
   function injectAdCss() {
-    if (document.getElementById(AD_STYLE_ID)) return;
     var parent = document.head || document.documentElement;
+    var style = document.getElementById(AD_STYLE_ID);
     if (!parent) return;
-    var style = document.createElement("style");
-    style.id = AD_STYLE_ID;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = AD_STYLE_ID;
+      parent.appendChild(style);
+    }
     style.textContent =
       '.relative>div[x-init*="campaignId=under_player"],' +
       'div[x-init*="campaignId=under_player"],' +
@@ -1108,9 +1120,14 @@
       'iframe[src*="smartpop"],' +
       'iframe[src*="stripcash"],' +
       'iframe[src*="inpage"],' +
+      'iframe[src*="liveef"],' +
+      'iframe[src*="live-ef"],' +
       '[id*="tsyndicate"],' +
       '[id*="ts-"],' +
       '[id*="ts_"],' +
+      '[id*="liveef"],' +
+      '[class*="liveef"],' +
+      '[class*="LIVEEF"],' +
       '[class*="ts-inpage"],' +
       '[class*="inpage-push"],' +
       '[class*="ts-outstream"],' +
@@ -1119,7 +1136,13 @@
       'body > div:has(iframe[src*="exoclick"]),' +
       'body > div:has(iframe[src*="juicyads"]),' +
       '[data-via-missav-ad="1"]{display:none!important;pointer-events:none!important;height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}';
-    parent.appendChild(style);
+  }
+
+  function isMainPlayer(el) {
+    if (!el) return false;
+    if (el.id === "player" || el.id === "video") return true;
+    if (el.closest) return Boolean(el.closest("#player, [data-demo-player]"));
+    return false;
   }
 
   function isProtected(el) {
@@ -1140,9 +1163,11 @@
     if (el.getAttribute("data-demo-player") === "1") return true;
     if (el.getAttribute("data-via-missav-keep") === "1") return true;
     if (el.getAttribute(CTRL_ATTR) === "1") return true;
-    if (el.tagName === "VIDEO" || el.tagName === "H1") return true;
+    if (el.tagName === "H1") return true;
+    if (el.tagName === "VIDEO") return isMainPlayer(el);
+    if (isMainPlayer(el)) return true;
     var cls = el.className && el.className.toString ? el.className.toString() : "";
-    return /\b(toolbar|missav-shell|tags|info-table|player|video-title)\b/.test(cls);
+    return /\b(toolbar|missav-shell|tags|info-table|video-title)\b/.test(cls);
   }
 
   function hideNode(el) {
@@ -1311,10 +1336,15 @@
   }
 
   function containsProtected(el) {
+    var videos;
+    var i;
     if (!el || !el.querySelector) return false;
-    return Boolean(
-      el.querySelector("video, h1, #" + BTN_ID + ", #via-missav-toast, [" + CTRL_ATTR + "]")
-    );
+    if (el.querySelector("h1, #" + BTN_ID + ", #via-missav-toast, [" + CTRL_ATTR + "]")) return true;
+    videos = el.querySelectorAll("video");
+    for (i = 0; i < videos.length; i++) {
+      if (isMainPlayer(videos[i])) return true;
+    }
+    return false;
   }
 
   function looksLikeAdMarkup(el) {
@@ -1328,11 +1358,11 @@
         (el.getAttribute("data-src") || ""))
         .toLowerCase();
     if (AD_HOST_RE.test(blob)) return true;
-    if (/tsyndicate|exoclick|juicyads|myavlive|adsbygoogle|inpage|popunder|popmag|hilltop|adsterra/.test(blob)) {
+    if (/tsyndicate|exoclick|juicyads|myavlive|adsbygoogle|inpage|popunder|popmag|hilltop|adsterra|liveef/.test(blob)) {
       return true;
     }
     try {
-      return /tsyndicate|exoclick|juicyads|myavlive|adsbygoogle|inpage.push|campaignid/i.test(
+      return /tsyndicate|exoclick|juicyads|myavlive|adsbygoogle|inpage.push|campaignid|liveef/i.test(
         (el.outerHTML || "").slice(0, 2500)
       );
     } catch (e) {
@@ -1355,8 +1385,8 @@
     if (!window.getComputedStyle) return looksLikeAdMarkup(el);
     style = window.getComputedStyle(el);
     if (!style) return false;
-    if (style.position !== "fixed" && style.position !== "sticky") {
-      return looksLikeAdMarkup(el) && el.tagName === "IFRAME";
+    if (style.position !== "fixed" && style.position !== "sticky" && style.position !== "absolute") {
+      return looksLikeAdMarkup(el) && (el.tagName === "IFRAME" || el.tagName === "VIDEO");
     }
     rect = el.getBoundingClientRect();
     if (rect.width < 36 || rect.height < 36) return false;
@@ -1367,13 +1397,17 @@
       return el.id === "b-a-b" || looksLikeAdMarkup(el);
     }
     z = parseInt(style.zIndex, 10);
-    nearRight = rect.right >= window.innerWidth - 180;
-    nearBottom = rect.bottom >= window.innerHeight - 180;
+    nearRight = rect.right >= window.innerWidth - 220;
+    nearBottom = rect.bottom >= window.innerHeight - 240;
     compact = rect.width <= 640 && rect.height <= 720;
     hasMedia = Boolean(el.querySelector && el.querySelector("iframe, img, video, a[target='_blank']"));
     if (looksLikeAdMarkup(el)) return true;
+    if (/LIVEEF|循环播放|liveef/i.test((el.innerText || "").slice(0, 240))) return true;
     if (el.tagName === "IFRAME" && nearRight && nearBottom) return true;
-    if (compact && nearRight && nearBottom) return true;
+    if (el.tagName === "VIDEO" && !isMainPlayer(el) && nearRight && nearBottom) return true;
+    if (compact && nearRight && nearBottom && (hasMedia || el.tagName === "IFRAME" || el.tagName === "VIDEO")) {
+      return true;
+    }
     return false;
   }
 
@@ -1474,7 +1508,12 @@
       [window.innerWidth - 16, window.innerHeight - 16],
       [window.innerWidth - 48, window.innerHeight - 48],
       [window.innerWidth - 16, window.innerHeight - 120],
-      [window.innerWidth - 140, window.innerHeight - 16]
+      [window.innerWidth - 140, window.innerHeight - 16],
+      [window.innerWidth - 80, window.innerHeight - 80],
+      [window.innerWidth - 200, window.innerHeight - 90],
+      [window.innerWidth - 80, window.innerHeight - 200],
+      [window.innerWidth - 280, window.innerHeight - 110],
+      [window.innerWidth - 180, window.innerHeight - 180]
     ];
     for (p = 0; p < points.length; p++) {
       try {
@@ -1489,12 +1528,44 @@
     }
   }
 
+  function hideCornerVideos() {
+    var videos = document.querySelectorAll("video, iframe");
+    var i;
+    var el;
+    var host;
+    var hops;
+    var rect;
+    for (i = 0; i < videos.length; i++) {
+      el = videos[i];
+      if (isMainPlayer(el) || isProtected(el)) continue;
+      host = el;
+      hops = 0;
+      while (host && host !== document.body && hops < 7) {
+        rect = host.getBoundingClientRect();
+        if (
+          rect.width >= 72 &&
+          rect.width <= 520 &&
+          rect.height >= 72 &&
+          rect.height <= 420 &&
+          rect.right >= window.innerWidth - 240 &&
+          rect.bottom >= window.innerHeight - 280
+        ) {
+          hideFloatingAdTree(host);
+          break;
+        }
+        host = host.parentElement;
+        hops += 1;
+      }
+    }
+  }
+
   function sweepFloatingAds() {
     var nodes = collectFloatCandidates();
     var i;
     for (i = 0; i < nodes.length; i++) {
       if (isFloatingAd(nodes[i])) hideFloatingAdTree(nodes[i]);
     }
+    hideCornerVideos();
     sweepCornerHits();
   }
 
@@ -1545,7 +1616,10 @@
       'a[href*="myavlive.com"]',
       'a[href*="//bit.ly/"]',
       'div[class*="fixed"][class*="bottom-"][class*="right-"]',
-      'div[class*="fixed"][class*="right-"][class*="bottom-"]'
+      'div[class*="fixed"][class*="right-"][class*="bottom-"]',
+      'iframe[src*="liveef"]',
+      '[class*="liveef"]',
+      '[id*="liveef"]'
     ];
     var i;
     var n;
