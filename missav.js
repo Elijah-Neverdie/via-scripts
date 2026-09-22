@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.2
+// @version      1.4.3
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 8) return;
-    window.__viaMissavGestureHook = 8;
+    if (window.__viaMissavGestureHook === 9) return;
+    window.__viaMissavGestureHook = 9;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -376,6 +376,7 @@
     var seekSide = "";
     var seekTimer = 0;
     var sideTimer = 0;
+    var inlineArea = 0;
 
     function videoEl() {
       return document.querySelector("video.player, #player video, .plyr video, video");
@@ -439,12 +440,23 @@
       if (typeof event.clientY === "number") lastTapY = event.clientY;
     }
 
+    function fsNode() {
+      var fs = document.fullscreenElement || document.webkitFullscreenElement;
+      var plyr = document.querySelector(".plyr--fullscreen-active, .plyr--fullscreen-fallback");
+      if (fs && fs.nodeType === 1 && fs.tagName !== "VIDEO") return fs;
+      if (plyr) return plyr;
+      if (fs && fs.parentElement && fs.parentElement !== document.body) return fs.parentElement;
+      return null;
+    }
+
     function boxRect() {
       var list = [];
       var v = videoEl();
+      var fs = fsNode();
       var i;
       var el;
       var rect;
+      if (fs) list.push(fs);
       if (v) {
         list.push(v);
         if (v.closest) {
@@ -579,8 +591,9 @@
         "#via-missav-hud .via-side.left{left:0;}" +
         "#via-missav-hud .via-side.right{left:66.667%;}" +
         "#via-missav-hud .via-side.on{opacity:1!important;visibility:visible!important;animation:via-seek-fade .9s ease forwards;}" +
-        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;font-size:34px;font-weight:800;letter-spacing:.04em;line-height:1;" +
-        "padding:10px 16px;border-radius:10px;background:rgba(0,0,0,.48);text-shadow:0 2px 10px rgba(0,0,0,.7);}" +
+        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;font-weight:400;letter-spacing:0;line-height:1;" +
+        "padding:0;margin:0;border:0;border-radius:0;background:transparent;" +
+        "text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.65);}" +
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
         "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
@@ -692,12 +705,43 @@
 
     function pinHud(wrap) {
       var rect = boxRect();
+      var fs = fsNode();
+      var scale;
+      var faces;
+      var i;
+      var px;
       if (!wrap) return;
+      if (!fs) {
+        if (rect.width * rect.height >= 8000) inlineArea = rect.width * rect.height;
+      }
+      scale = 1;
+      if (fs && inlineArea > 0) {
+        scale = Math.sqrt((rect.width * rect.height) / inlineArea);
+        if (scale < 1) scale = 1;
+        if (scale > 8) scale = 8;
+      }
+      px = titlePx() * scale;
+      faces = wrap.querySelectorAll(".via-face");
+      for (i = 0; i < faces.length; i++) {
+        faces[i].style.fontSize = px + "px";
+        faces[i].style.fontWeight = "400";
+      }
       wrap.style.left = (rect.left || 0) + "px";
       wrap.style.top = (rect.top || 0) + "px";
       wrap.style.width = (rect.width || 0) + "px";
       wrap.style.height = (rect.height || 0) + "px";
+      wrap.style.zIndex = "2147483646";
       wrap.classList.add("via-hud-on");
+    }
+
+    function titlePx() {
+      var h1 = document.querySelector("h1");
+      var px = 16;
+      if (h1 && window.getComputedStyle) {
+        px = parseFloat(window.getComputedStyle(h1).fontSize) || 16;
+      }
+      if (px < 12) px = 12;
+      return px;
     }
 
     function hideHud() {
@@ -720,7 +764,7 @@
         return null;
       }
       host = plyrEl() || playerRoot();
-      mount = document.body || document.documentElement;
+      mount = fsNode() || document.body || document.documentElement;
       if (!mount) return null;
       if (!wrap) {
         wrap = document.createElement("div");
@@ -877,7 +921,7 @@
       panel = wrap.querySelector(".via-side." + side);
       face = panel && panel.querySelector(".via-face");
       if (face) {
-        face.textContent = (side === "left" ? "-" : "+") + amount + "秒";
+        face.textContent = (side === "left" ? "-" : "+") + amount + "s";
         face.style.setProperty("opacity", "1", "important");
         face.style.setProperty("visibility", "visible", "important");
       }
@@ -1021,16 +1065,22 @@
       hookVideo();
       watchPlyr();
       ensureOverlay();
+      if (!fsNode()) {
+        var inlineRect = boxRect();
+        if (inlineRect.width * inlineRect.height >= 8000) {
+          inlineArea = inlineRect.width * inlineRect.height;
+        }
+      }
       paintControls(uiShown);
     }, 800);
   }
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "8") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "9") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "8");
+      document.documentElement.setAttribute("data-via-missav-gesture", "9");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
