@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.3
-// @description  分享旁复制按钮、持续屏蔽延后悬浮广告，播放器左中右三分区双击快退/播放暂停/快进，跳过首次播放弹窗
+// @version      1.3.4
+// @description  单击显隐控制条，双击左中右快退/播放暂停/快进并带 YouTube 式反馈，全屏也可看到高级快进条
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -361,9 +361,23 @@
     var pending = 0;
     var lastTouch = 0;
     var lastAction = 0;
+    var lastBtnTouch = 0;
+    var uiShown = true;
+    var seekStreak = 0;
+    var seekSide = "";
+    var seekTimer = 0;
+    var sideTimer = 0;
 
     function videoEl() {
       return document.querySelector("video.player, #player video, .plyr video, video");
+    }
+
+    function playerRoot() {
+      var v = videoEl();
+      if (v && v.closest) {
+        return v.closest(".plyr") || v.closest("#player") || v.closest("[data-demo-player]");
+      }
+      return document.querySelector(".plyr, #player");
     }
 
     function boxEl() {
@@ -376,27 +390,14 @@
           v
         );
       }
-      return document.querySelector(".plyr, #player");
-    }
-
-    function hintParent() {
-      var v = videoEl();
-      if (v && v.parentElement && v.tagName === "VIDEO") {
-        return (
-          v.closest(".plyr__video-wrapper") ||
-          v.closest(".plyr") ||
-          v.closest("#player") ||
-          v.parentElement
-        );
-      }
-      return boxEl();
+      return playerRoot();
     }
 
     function chrome(node) {
       if (!node || !node.closest) return false;
       return Boolean(
         node.closest(
-          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn"
+          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-play"
         )
       );
     }
@@ -424,11 +425,19 @@
       return "center";
     }
 
+    function isPaused() {
+      var player = window.player;
+      var video = videoEl();
+      if (player && typeof player.paused === "boolean") return player.paused;
+      return !video || video.paused;
+    }
+
     function disablePlyr() {
       var player = window.player;
       if (!player || !player.config) return;
       try {
         player.config.clickToPlay = false;
+        player.config.hideControls = true;
         player.config.doubleClickFullscreen = false;
         player.config.doubleClickToFullscreen = false;
       } catch (e) {}
@@ -475,46 +484,229 @@
       }
     }
 
-    function hint(text) {
-      var host = hintParent();
-      var el = document.getElementById("via-missav-seek-hint");
-      if (!host) return;
-      if (!el) {
-        el = document.createElement("div");
-        el.id = "via-missav-seek-hint";
-        el.setAttribute("data-via-missav-keep", "1");
-        el.style.cssText =
-          "position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);z-index:8;" +
-          "padding:.45rem .85rem;border-radius:999px;font-size:15px;line-height:1.2;" +
-          "background:rgba(0,0,0,.62);color:#fff;pointer-events:none;white-space:nowrap;";
-        if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
-          host.style.position = "relative";
-        }
-        host.appendChild(el);
-      } else if (el.parentElement !== host) {
-        host.appendChild(el);
+    function injectStyle() {
+      if (document.getElementById("via-missav-gesture-style")) return;
+      var style = document.createElement("style");
+      style.id = "via-missav-gesture-style";
+      style.textContent =
+        ".plyr__control--overlaid{display:none!important;}" +
+        "#via-missav-overlay{position:absolute;inset:0;z-index:8;pointer-events:none;overflow:hidden;}" +
+        "#via-missav-overlay .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
+        "#via-missav-overlay .via-side.left{left:0;}" +
+        "#via-missav-overlay .via-side.right{right:0;}" +
+        "#via-missav-overlay .via-side.on{animation:via-seek-fade .75s ease forwards;}" +
+        "#via-missav-overlay .via-ripple{position:absolute;width:210%;height:0;padding-bottom:210%;border-radius:50%;background:rgba(255,255,255,.16);top:50%;}" +
+        "#via-missav-overlay .via-side.left .via-ripple{right:8%;transform:translate(40%,-50%);}" +
+        "#via-missav-overlay .via-side.right .via-ripple{left:8%;transform:translate(-40%,-50%);}" +
+        "#via-missav-overlay .via-face{position:relative;z-index:1;color:#fff;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.45);}" +
+        "#via-missav-overlay .via-face svg{display:block;margin:0 auto 2px;}" +
+        "#via-missav-overlay .via-face b{display:block;font-size:13px;font-weight:600;letter-spacing:.02em;}" +
+        "#via-missav-overlay .via-chevrons{display:flex;justify-content:center;align-items:center;height:28px;}" +
+        "#via-missav-overlay .via-side.on .via-chev{animation:via-chevron .55s ease;}" +
+        "#via-missav-overlay .via-side.on .via-chev:nth-child(2){animation-delay:.06s;}" +
+        "#via-missav-overlay .via-side.on .via-chev:nth-child(3){animation-delay:.12s;}" +
+        "#via-missav-play{pointer-events:auto;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:76px;height:76px;border:0;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:none;align-items:center;justify-content:center;z-index:9;padding:0;}" +
+        "#via-missav-play.show{display:flex;}" +
+        "#via-missav-play.pulse{animation:via-play-pulse .4s ease;}" +
+        "@keyframes via-seek-fade{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}" +
+        "@keyframes via-chevron{0%{opacity:0;transform:scale(.7)}35%{opacity:1;transform:scale(1)}100%{opacity:.35;transform:scale(1)}}" +
+        "@keyframes via-play-pulse{0%{transform:translate(-50%,-50%) scale(.82);opacity:.55}60%{transform:translate(-50%,-50%) scale(1.06);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}";
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    function chevrons(dir) {
+      var i;
+      var html = '<div class="via-chevrons">';
+      for (i = 0; i < 3; i++) {
+        html +=
+          '<svg class="via-chev" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
+          (dir === "left"
+            ? '<path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>'
+            : '<path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/>') +
+          "</svg>";
       }
-      el.textContent = text;
-      el.style.display = "block";
-      if (hint.timer) window.clearTimeout(hint.timer);
-      hint.timer = window.setTimeout(function () {
-        el.style.display = "none";
-      }, 700);
+      return html + "</div>";
+    }
+
+    function playSvg() {
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    }
+
+    function pauseSvg() {
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
+    }
+
+    function ensureOverlay() {
+      var host = playerRoot() || boxEl();
+      var wrap;
+      var playBtn;
+      if (!host) return null;
+      if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
+        host.style.position = "relative";
+      }
+      wrap = document.getElementById("via-missav-overlay");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.id = "via-missav-overlay";
+        wrap.setAttribute("data-via-missav-keep", "1");
+        wrap.innerHTML =
+          '<div class="via-side left"><i class="via-ripple"></i><div class="via-face"></div></div>' +
+          '<div class="via-side right"><i class="via-ripple"></i><div class="via-face"></div></div>' +
+          '<button type="button" id="via-missav-play" aria-label="播放或暂停"></button>';
+        host.appendChild(wrap);
+        playBtn = wrap.querySelector("#via-missav-play");
+        playBtn.addEventListener(
+          "touchend",
+          function (event) {
+            lastBtnTouch = Date.now();
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            togglePlay();
+            window.setTimeout(function () {
+              syncPlayIcon(true);
+              setUi(true);
+            }, 0);
+          },
+          { capture: true, passive: false }
+        );
+        playBtn.addEventListener(
+          "click",
+          function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            if (Date.now() - lastBtnTouch < 700) return;
+            togglePlay();
+            window.setTimeout(function () {
+              syncPlayIcon(true);
+              setUi(true);
+            }, 0);
+          },
+          true
+        );
+      } else if (wrap.parentElement !== host) {
+        host.appendChild(wrap);
+      }
+      return wrap;
+    }
+
+    function syncPlayIcon(pulse) {
+      var btn = document.getElementById("via-missav-play");
+      if (!btn) return;
+      btn.innerHTML = isPaused() ? playSvg() : pauseSvg();
+      btn.setAttribute("aria-label", isPaused() ? "播放" : "暂停");
+      if (pulse) {
+        btn.classList.remove("pulse");
+        void btn.offsetWidth;
+        btn.classList.add("pulse");
+      }
+    }
+
+    function showPlayBtn(show) {
+      var btn = document.getElementById("via-missav-play");
+      if (!btn) return;
+      if (show) btn.classList.add("show");
+      else btn.classList.remove("show");
+    }
+
+    function setUi(shown, fromPlyr) {
+      var player;
+      uiShown = !!shown;
+      document.documentElement.setAttribute("data-via-missav-ui", uiShown ? "1" : "0");
+      ensureOverlay();
+      syncPlayIcon(false);
+      showPlayBtn(uiShown || isPaused());
+      if (fromPlyr) return;
+      player = window.player;
+      if (player && typeof player.toggleControls === "function") {
+        try {
+          player.toggleControls(uiShown);
+        } catch (e) {}
+      } else {
+        player = playerRoot();
+        if (player && player.classList) {
+          player.classList.toggle("plyr--hide-controls", !uiShown);
+        }
+      }
+    }
+
+    function flashSeek(side) {
+      var wrap = ensureOverlay();
+      var panel;
+      var face;
+      var amount;
+      if (!wrap) return;
+      if (seekSide !== side || Date.now() - lastAction > 900) seekStreak = 0;
+      seekSide = side;
+      seekStreak += 1;
+      amount = SEEK * seekStreak;
+      panel = wrap.querySelector(".via-side." + side);
+      face = panel && panel.querySelector(".via-face");
+      if (face) {
+        face.innerHTML =
+          chevrons(side) + "<b>" + (side === "left" ? "−" : "+") + amount + " 秒</b>";
+      }
+      showPlayBtn(false);
+      var sides = wrap.querySelectorAll(".via-side");
+      var s;
+      for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
+      if (panel) {
+        void panel.offsetWidth;
+        panel.classList.add("on");
+      }
+      if (sideTimer) window.clearTimeout(sideTimer);
+      sideTimer = window.setTimeout(function () {
+        sides = wrap.querySelectorAll(".via-side");
+        for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
+        showPlayBtn(uiShown || isPaused());
+      }, 750);
+      if (seekTimer) window.clearTimeout(seekTimer);
+      seekTimer = window.setTimeout(function () {
+        seekStreak = 0;
+        seekSide = "";
+      }, 900);
+    }
+
+    function hookPlyrUi() {
+      var player = window.player;
+      if (!player || player.__viaUiHook || typeof player.on !== "function") return;
+      player.__viaUiHook = true;
+      try {
+        player.on("controlsshown", function () {
+          setUi(true, true);
+        });
+        player.on("controlshidden", function () {
+          if (!isPaused()) setUi(false, true);
+        });
+        player.on("play", function () {
+          syncPlayIcon(false);
+        });
+        player.on("pause", function () {
+          syncPlayIcon(false);
+          setUi(true);
+        });
+      } catch (e) {}
     }
 
     function apply(side) {
       lastAction = Date.now();
+      ensureOverlay();
       if (side === "left") {
         seekBy(-SEEK);
-        hint("−15 秒");
+        flashSeek("left");
         return;
       }
       if (side === "right") {
         seekBy(SEEK);
-        hint("+15 秒");
+        flashSeek("right");
         return;
       }
       togglePlay();
+      window.setTimeout(function () {
+        syncPlayIcon(true);
+        setUi(true);
+      }, 0);
     }
 
     function onTap(event) {
@@ -531,7 +723,7 @@
       }
       pending = window.setTimeout(function () {
         pending = 0;
-        togglePlay();
+        setUi(!uiShown);
       }, GAP);
     }
 
@@ -548,6 +740,8 @@
       apply(zone(event));
     }
 
+    injectStyle();
+    ensureOverlay();
     document.addEventListener(
       "touchend",
       function (event) {
@@ -566,7 +760,13 @@
     );
     document.addEventListener("dblclick", onDblClick, true);
     disablePlyr();
-    window.setInterval(disablePlyr, 800);
+    hookPlyrUi();
+    setUi(true);
+    window.setInterval(function () {
+      disablePlyr();
+      hookPlyrUi();
+      ensureOverlay();
+    }, 800);
   }
 
   function injectPageGestureHook() {
@@ -856,6 +1056,8 @@
       (el.id === BTN_ID ||
         el.id === "via-missav-toast" ||
         el.id === "via-missav-seek-hint" ||
+        el.id === "via-missav-overlay" ||
+        el.id === "via-missav-play" ||
         el.getAttribute(CTRL_ATTR) === "1" ||
         el.getAttribute(BTN_ATTR) === "1")
     );
@@ -1199,10 +1401,14 @@
       "background:rgba(46,52,64,.96);color:#eceff4;border:1px solid #4c566a;" +
       "box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;max-width:90vw;}" +
       "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}" +
+      ".plyr__control--overlaid{display:none!important;}" +
       "[" +
       CTRL_ATTR +
-      "='1'][data-via-missav-fs='1']{display:flex!important;visibility:visible!important;opacity:1!important;" +
-      "position:absolute!important;left:0;right:0;bottom:4.6rem;z-index:4;justify-content:space-between;" +
+      "='1']{display:none!important;}" +
+      "[" +
+      CTRL_ATTR +
+      "='1'][data-via-missav-ui='1']{display:flex!important;visibility:visible!important;opacity:1!important;" +
+      "position:absolute!important;left:0;right:0;bottom:4.6rem;z-index:10;justify-content:space-between;" +
       "padding:.35rem .5rem;background:rgba(0,0,0,.62);pointer-events:auto;}";
     parent.appendChild(style);
   }
@@ -1373,17 +1579,6 @@
     );
   }
 
-  function isPhoneLandscape() {
-    var touch = navigator.maxTouchPoints > 0;
-    var landscape = false;
-    try {
-      landscape = window.matchMedia("(orientation: landscape)").matches;
-    } catch (e) {
-      landscape = window.innerWidth > window.innerHeight;
-    }
-    return touch && landscape;
-  }
-
   function rememberControlHome(bar) {
     if (bar.__viaParent) return;
     bar.__viaParent = bar.parentElement;
@@ -1404,8 +1599,15 @@
     bar.removeAttribute("data-via-missav-fs");
   }
 
-  function placeControlBar(bar, force) {
-    var root = force ? fullscreenRoot() : null;
+  function playerOverlayHost() {
+    return (
+      fullscreenRoot() ||
+      document.querySelector(".plyr--fullscreen-active, .plyr--fullscreen-fallback, .plyr, #player")
+    );
+  }
+
+  function placeControlBar(bar) {
+    var root = playerOverlayHost();
     if (root) {
       rememberControlHome(bar);
       if (bar.parentElement !== root) root.appendChild(bar);
@@ -1429,18 +1631,18 @@
     var bar = findControlBar();
     var hideClasses;
     var i;
-    var force;
+    var shown = document.documentElement.getAttribute("data-via-missav-ui") !== "0";
     hookPlayerFullscreen();
     if (!bar) return;
     bar.setAttribute(CTRL_ATTR, "1");
     hideClasses = savedHideClasses(bar);
-    force = !!fullscreenRoot();
-    if (isPhoneLandscape() || force) {
-      for (i = 0; i < hideClasses.length; i++) bar.classList.remove(hideClasses[i]);
-    } else {
-      for (i = 0; i < hideClasses.length; i++) bar.classList.add(hideClasses[i]);
+    placeControlBar(bar);
+    for (i = 0; i < hideClasses.length; i++) {
+      if (shown) bar.classList.remove(hideClasses[i]);
+      else bar.classList.add(hideClasses[i]);
     }
-    placeControlBar(bar, force);
+    if (shown) bar.setAttribute("data-via-missav-ui", "1");
+    else bar.removeAttribute("data-via-missav-ui");
   }
 
   function startDomWork() {
@@ -1478,6 +1680,10 @@
     window.addEventListener("resize", keepLandscapeControls);
     document.addEventListener("fullscreenchange", keepLandscapeControls);
     document.addEventListener("webkitfullscreenchange", keepLandscapeControls);
+    new MutationObserver(keepLandscapeControls).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-via-missav-ui"]
+    });
   }
 
   installOpenHook();
