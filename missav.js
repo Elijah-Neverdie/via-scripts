@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.1
+// @version      1.4.2
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -1113,8 +1113,8 @@
       parent.appendChild(style);
     }
     style.textContent =
-      '.relative>div[x-init*="campaignId=under_player"],' +
-      'div[x-init*="campaignId=under_player"],' +
+      '.relative>div[x-init*="campaignId=under_player"]:not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
+      'div[x-init*="campaignId=under_player"]:not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
       '[class*="under_player"],' +
       'div[x-init*="#genki-counter"],' +
       "div.ts-outstream-video," +
@@ -1150,9 +1150,9 @@
       '[class*="inpage-push"],' +
       '[class*="ts-outstream"],' +
       '#via-missav-layer,' +
-      'body > div:has(iframe[src*="tsyndicate"]),' +
-      'body > div:has(iframe[src*="exoclick"]),' +
-      'body > div:has(iframe[src*="juicyads"]),' +
+      'body > div:has(iframe[src*="tsyndicate"]):not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
+      'body > div:has(iframe[src*="exoclick"]):not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
+      'body > div:has(iframe[src*="juicyads"]):not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
       '[data-via-missav-ad="1"]{display:none!important;pointer-events:none!important;height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}';
   }
 
@@ -1178,26 +1178,31 @@
     var el;
     for (i = 0; i < nodes.length; i++) {
       el = nodes[i];
+      if (holdsMainPlayer(el) || looksLikeContent(el)) {
+        clearAdHide(el);
+        continue;
+      }
       if (looksLikeAdMarkup(el)) continue;
-      if (!looksLikeVideoCard(el) && !looksLikeContent(el)) continue;
-      el.removeAttribute("data-via-missav-ad");
-      el.hidden = false;
-      el.style.removeProperty("display");
-      el.style.removeProperty("visibility");
-      el.style.removeProperty("pointer-events");
-      el.style.removeProperty("opacity");
-      el.style.removeProperty("height");
-      el.style.removeProperty("overflow");
-      el.style.removeProperty("margin");
-      el.style.removeProperty("padding");
+      if (!looksLikeVideoCard(el)) continue;
+        clearAdHide(el);
     }
   }
 
   function isMainPlayer(el) {
     if (!el) return false;
     if (el.id === "player" || el.id === "video") return true;
-    if (el.closest) return Boolean(el.closest("#player, [data-demo-player]"));
+    if (el.classList && (el.classList.contains("plyr") || el.classList.contains("player"))) return true;
+    if (el.closest) return Boolean(el.closest("#player, .plyr, video.player, [data-demo-player]"));
     return false;
+  }
+
+  function holdsMainPlayer(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    if (el.id === "player" || (el.classList && el.classList.contains("plyr"))) return true;
+    if (el.tagName === "VIDEO" && el.classList && el.classList.contains("player")) return true;
+    if (el.closest && el.closest("#player, .plyr, [data-demo-player]")) return true;
+    if (!el.querySelector) return false;
+    return Boolean(el.querySelector("#player, .plyr, video.player"));
   }
 
   function isProtected(el) {
@@ -1218,15 +1223,44 @@
     if (el.getAttribute("data-demo-player") === "1") return true;
     if (el.getAttribute("data-via-missav-keep") === "1") return true;
     if (el.getAttribute(CTRL_ATTR) === "1") return true;
-    if (el.tagName === "H1") return true;
-    if (el.tagName === "VIDEO") return isMainPlayer(el);
-    if (isMainPlayer(el)) return true;
+    if (el.tagName === "H1" || el.tagName === "VIDEO") return true;
+    if (isMainPlayer(el) || holdsMainPlayer(el)) return true;
     var cls = el.className && el.className.toString ? el.className.toString() : "";
-    return /\b(toolbar|missav-shell|tags|info-table|video-title)\b/.test(cls);
+    return /\b(toolbar|missav-shell|tags|info-table|player|video-title)\b/.test(cls);
+  }
+
+  function clearAdHide(el) {
+    if (!el || el.getAttribute("data-via-missav-ad") !== "1") return;
+    el.removeAttribute("data-via-missav-ad");
+    el.hidden = false;
+    el.style.removeProperty("display");
+    el.style.removeProperty("visibility");
+    el.style.removeProperty("pointer-events");
+    el.style.removeProperty("opacity");
+    el.style.removeProperty("height");
+    el.style.removeProperty("overflow");
+    el.style.removeProperty("margin");
+    el.style.removeProperty("padding");
+  }
+
+  function revealPlayer() {
+    var seeds = document.querySelectorAll("#player, .plyr, video.player, video");
+    var i;
+    var el;
+    var hops;
+    for (i = 0; i < seeds.length; i++) {
+      el = seeds[i];
+      hops = 0;
+      while (el && el !== document.body && hops < 8) {
+        clearAdHide(el);
+        el = el.parentElement;
+        hops += 1;
+      }
+    }
   }
 
   function hideNode(el) {
-    if (!el || isProtected(el) || isOurUi(el)) return;
+    if (!el || isProtected(el) || isOurUi(el) || holdsMainPlayer(el)) return;
     el.setAttribute("data-via-missav-ad", "1");
     el.style.setProperty("display", "none", "important");
     el.style.setProperty("visibility", "hidden", "important");
@@ -1439,7 +1473,7 @@
     var nearBottom;
     var compact;
     var hasMedia;
-    if (!el || el.nodeType !== 1 || isProtected(el) || isOurUi(el)) return false;
+    if (!el || el.nodeType !== 1 || isProtected(el) || isOurUi(el) || holdsMainPlayer(el)) return false;
     if (looksLikeVideoCard(el) || looksLikeContent(el)) return false;
     if (containsProtected(el)) return false;
     if (el.id === "b-a-b" || el.hasAttribute("data-ts-spot")) return true;
@@ -1601,14 +1635,15 @@
     var rect;
     for (i = 0; i < videos.length; i++) {
       el = videos[i];
-      if (isMainPlayer(el) || isProtected(el)) continue;
+      if (holdsMainPlayer(el)) continue;
       host = el;
       hops = 0;
       while (host && host !== document.body && hops < 7) {
         rect = host.getBoundingClientRect();
         if (
+          !holdsMainPlayer(host) &&
           rect.width >= 72 &&
-          rect.width <= 520 &&
+          rect.width <= Math.min(520, window.innerWidth * 0.62) &&
           rect.height >= 72 &&
           rect.height <= 420 &&
           rect.right >= window.innerWidth - 240 &&
@@ -1652,9 +1687,11 @@
       attributeFilter: ["style", "class", "id", "src", "hidden"]
     });
     window.setInterval(function () {
+      revealPlayer();
       restoreMistakenContent();
       sweepFloatingAds();
     }, 1000);
+    revealPlayer();
     restoreMistakenContent();
     sweepFloatingAds();
   }
@@ -1707,6 +1744,7 @@
         }
       }
     }
+    revealPlayer();
     restoreMistakenContent();
     hideDesktopSidebar();
     sweepFloatingAds();
