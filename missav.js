@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.2
-// @description  分享旁复制按钮、持续屏蔽延后出现的右下角悬浮广告，跳过首次播放弹窗，横屏仅保留快进快退条
+// @version      1.3.3
+// @description  分享旁复制按钮、持续屏蔽延后悬浮广告，播放器左中右三分区双击快退/播放暂停/快进，跳过首次播放弹窗
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -264,6 +264,7 @@
 
   function installOpenHook() {
     injectPageOpenHook();
+    injectPageGestureHook();
     try {
       Object.defineProperty(window, "open", {
         configurable: true,
@@ -277,6 +278,7 @@
     window.setInterval(function () {
       if (window.open !== blockedOpen) window.open = blockedOpen;
       injectPageOpenHook();
+      injectPageGestureHook();
     }, 800);
   }
 
@@ -345,8 +347,239 @@
   function isPlayerChrome(node) {
     if (!node || !node.closest) return false;
     return Boolean(
-      node.closest(".plyr__controls, .plyr__menu, [" + CTRL_ATTR + "], #" + BTN_ID)
+      node.closest(
+        ".plyr__controls, .plyr__menu, .plyr__progress, [" + CTRL_ATTR + "], #" + BTN_ID
+      )
     );
+  }
+
+  function pageGestureHook() {
+    if (window.__viaMissavGestureHook) return;
+    window.__viaMissavGestureHook = true;
+    var SEEK = 15;
+    var GAP = 280;
+    var pending = 0;
+    var lastTouch = 0;
+    var lastAction = 0;
+
+    function videoEl() {
+      return document.querySelector("video.player, #player video, .plyr video, video");
+    }
+
+    function boxEl() {
+      var v = videoEl();
+      if (v && v.closest) {
+        return (
+          v.closest(".plyr__video-wrapper") ||
+          v.closest(".plyr") ||
+          v.closest("#player") ||
+          v
+        );
+      }
+      return document.querySelector(".plyr, #player");
+    }
+
+    function hintParent() {
+      var v = videoEl();
+      if (v && v.parentElement && v.tagName === "VIDEO") {
+        return (
+          v.closest(".plyr__video-wrapper") ||
+          v.closest(".plyr") ||
+          v.closest("#player") ||
+          v.parentElement
+        );
+      }
+      return boxEl();
+    }
+
+    function chrome(node) {
+      if (!node || !node.closest) return false;
+      return Boolean(
+        node.closest(
+          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn"
+        )
+      );
+    }
+
+    function inPlayer(node) {
+      if (!node || !node.closest) return false;
+      return Boolean(
+        node.closest("#player,#video,.player,video.player,[data-demo-player],.plyr,.jwplayer")
+      );
+    }
+
+    function pointX(event) {
+      if (event.changedTouches && event.changedTouches[0]) return event.changedTouches[0].clientX;
+      return event.clientX;
+    }
+
+    function zone(event) {
+      var box = boxEl();
+      if (!box) return "center";
+      var rect = box.getBoundingClientRect();
+      var width = rect.width || 1;
+      var x = pointX(event) - rect.left;
+      if (x < width / 3) return "left";
+      if (x > (width * 2) / 3) return "right";
+      return "center";
+    }
+
+    function disablePlyr() {
+      var player = window.player;
+      if (!player || !player.config) return;
+      try {
+        player.config.clickToPlay = false;
+        player.config.doubleClickFullscreen = false;
+        player.config.doubleClickToFullscreen = false;
+      } catch (e) {}
+    }
+
+    function clampTime(time, duration) {
+      if (time < 0) return 0;
+      if (duration && isFinite(duration) && time > duration) return duration;
+      return time;
+    }
+
+    function seekBy(delta) {
+      var player = window.player;
+      var video = videoEl();
+      if (player && typeof player.currentTime === "number") {
+        player.currentTime = clampTime(player.currentTime + delta, player.duration);
+        return;
+      }
+      if (video) {
+        video.currentTime = clampTime((video.currentTime || 0) + delta, video.duration);
+      }
+    }
+
+    function togglePlay() {
+      var player = window.player;
+      var video = videoEl();
+      try {
+        if (player && typeof player.togglePlay === "function") {
+          player.togglePlay();
+          return;
+        }
+        if (player && typeof player.paused === "boolean") {
+          if (player.paused) player.play();
+          else player.pause();
+          return;
+        }
+      } catch (e) {}
+      if (!video) return;
+      if (video.paused) {
+        var maybe = video.play();
+        if (maybe && maybe.catch) maybe.catch(function () {});
+      } else {
+        video.pause();
+      }
+    }
+
+    function hint(text) {
+      var host = hintParent();
+      var el = document.getElementById("via-missav-seek-hint");
+      if (!host) return;
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "via-missav-seek-hint";
+        el.setAttribute("data-via-missav-keep", "1");
+        el.style.cssText =
+          "position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);z-index:8;" +
+          "padding:.45rem .85rem;border-radius:999px;font-size:15px;line-height:1.2;" +
+          "background:rgba(0,0,0,.62);color:#fff;pointer-events:none;white-space:nowrap;";
+        if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
+          host.style.position = "relative";
+        }
+        host.appendChild(el);
+      } else if (el.parentElement !== host) {
+        host.appendChild(el);
+      }
+      el.textContent = text;
+      el.style.display = "block";
+      if (hint.timer) window.clearTimeout(hint.timer);
+      hint.timer = window.setTimeout(function () {
+        el.style.display = "none";
+      }, 700);
+    }
+
+    function apply(side) {
+      lastAction = Date.now();
+      if (side === "left") {
+        seekBy(-SEEK);
+        hint("−15 秒");
+        return;
+      }
+      if (side === "right") {
+        seekBy(SEEK);
+        hint("+15 秒");
+        return;
+      }
+      togglePlay();
+    }
+
+    function onTap(event) {
+      if (chrome(event.target) || !inPlayer(event.target)) return;
+      if (event.type === "touchend" && event.touches && event.touches.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (pending) {
+        window.clearTimeout(pending);
+        pending = 0;
+        apply(zone(event));
+        return;
+      }
+      pending = window.setTimeout(function () {
+        pending = 0;
+        togglePlay();
+      }, GAP);
+    }
+
+    function onDblClick(event) {
+      if (chrome(event.target) || !inPlayer(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (Date.now() - lastAction < 400) return;
+      if (pending) {
+        window.clearTimeout(pending);
+        pending = 0;
+      }
+      apply(zone(event));
+    }
+
+    document.addEventListener(
+      "touchend",
+      function (event) {
+        lastTouch = Date.now();
+        onTap(event);
+      },
+      { capture: true, passive: false }
+    );
+    document.addEventListener(
+      "click",
+      function (event) {
+        if (Date.now() - lastTouch < 700) return;
+        onTap(event);
+      },
+      true
+    );
+    document.addEventListener("dblclick", onDblClick, true);
+    disablePlyr();
+    window.setInterval(disablePlyr, 800);
+  }
+
+  function injectPageGestureHook() {
+    try {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "1") {
+        return;
+      }
+      document.documentElement.setAttribute("data-via-missav-gesture", "1");
+      var script = document.createElement("script");
+      script.textContent = "(" + pageGestureHook.toString() + ")();";
+      document.documentElement.appendChild(script);
+      if (script.parentNode) script.parentNode.removeChild(script);
+    } catch (e) {}
   }
 
   function hasPopHandler(node) {
@@ -622,6 +855,7 @@
       el &&
       (el.id === BTN_ID ||
         el.id === "via-missav-toast" ||
+        el.id === "via-missav-seek-hint" ||
         el.getAttribute(CTRL_ATTR) === "1" ||
         el.getAttribute(BTN_ATTR) === "1")
     );
@@ -1215,6 +1449,7 @@
     disablePopHandlers();
     keepLandscapeControls();
     injectAdCss();
+    injectPageGestureHook();
     startFloatingAdWatch();
 
     var tries = 0;
@@ -1248,6 +1483,7 @@
   installOpenHook();
   installLocationHooks();
   installClickGuard();
+  injectPageGestureHook();
   disablePopHandlers();
   injectAdCss();
   startFloatingAdWatch();
