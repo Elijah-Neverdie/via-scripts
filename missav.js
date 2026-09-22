@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.7
-// @description  仅在播放页的原始播放器内加入手势和反馈，持续屏蔽右下角悬浮广告
+// @version      1.3.8
+// @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -344,22 +344,22 @@
     } catch (e) {}
   }
 
-  function isPlayerChrome(node) {
+    function isPlayerChrome(node) {
     if (!node || !node.closest) return false;
     return Boolean(
       node.closest(
-        ".plyr__controls, .plyr__menu, .plyr__progress, .plyr__control--overlaid, [" +
+        ".plyr__controls, .plyr__menu, .plyr__progress, [" +
           CTRL_ATTR +
           "], #" +
           BTN_ID +
-          ", #via-missav-seekbar, #via-missav-hud"
+          ", #via-missav-seekbar"
       )
     );
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook) return;
-    window.__viaMissavGestureHook = true;
+    if (window.__viaMissavGestureHook === 5) return;
+    window.__viaMissavGestureHook = 5;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -368,7 +368,7 @@
     var lastTapY = 0;
     var lastAction = 0;
     var lastBtnTouch = 0;
-    var uiShown = true;
+    var uiShown = false;
     var userPlayed = false;
     var primed = false;
     var hideTimer = 0;
@@ -389,11 +389,34 @@
       return document.querySelector(".plyr, #player");
     }
 
+    function plyrEl() {
+      var v = videoEl();
+      if (v && v.closest) {
+        return v.closest(".plyr");
+      }
+      return document.querySelector(".plyr");
+    }
+
+    function overlaidVisible(node) {
+      var over = node && node.closest && node.closest(".plyr__control--overlaid");
+      var cs;
+      var rect;
+      if (!over) return false;
+      cs = window.getComputedStyle ? window.getComputedStyle(over) : null;
+      if (cs) {
+        if (cs.display === "none" || cs.visibility === "hidden") return false;
+        if (parseFloat(cs.opacity) === 0) return false;
+      }
+      rect = over.getBoundingClientRect();
+      return rect.width > 8 && rect.height > 8;
+    }
+
     function chrome(node) {
       if (!node || !node.closest) return false;
+      if (overlaidVisible(node)) return true;
       return Boolean(
         node.closest(
-          ".plyr__controls,.plyr__menu,.plyr__progress,.plyr__control--overlaid,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-seekbar,#via-missav-hud"
+          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-seekbar"
         )
       );
     }
@@ -467,7 +490,7 @@
       if (!player || !player.config) return;
       try {
         player.config.clickToPlay = false;
-        player.config.hideControls = false;
+        player.config.hideControls = !uiShown;
         player.config.autoplay = false;
         player.config.doubleClickFullscreen = false;
         player.config.doubleClickToFullscreen = false;
@@ -538,14 +561,18 @@
 
     function injectStyle() {
       var style = document.getElementById("via-missav-gesture-style");
-      if (style) return;
-      style = document.createElement("style");
-      style.id = "via-missav-gesture-style";
+      if (!style) {
+        style = document.createElement("style");
+        style.id = "via-missav-gesture-style";
+        (document.head || document.documentElement).appendChild(style);
+      }
       style.textContent =
         "#via-missav-layer{display:none!important;}" +
-        ".plyr.via-ui-on .plyr__controls,.plyr.via-ui-on.plyr--hide-controls .plyr__controls{" +
-        "opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:none!important;}" +
-        ".plyr:not(.via-ui-on) .plyr__controls{opacity:0!important;pointer-events:none!important;}" +
+        ".plyr.via-ui-on .plyr__controls,.plyr.via-ui-on .plyr__controls[hidden]," +
+        ".plyr.via-ui-on.plyr--hide-controls .plyr__controls," +
+        ".plyr.via-ui-on.plyr--hide-controls .plyr__controls[hidden]{" +
+        "display:flex!important;opacity:1!important;visibility:visible!important;" +
+        "pointer-events:auto!important;transform:none!important;translate:none!important;}" +
         "#via-missav-hud{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:hidden;}" +
         "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
         "#via-missav-hud .via-side.left{left:0;}" +
@@ -563,7 +590,7 @@
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
         "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
-        ".plyr.via-ui-on #via-missav-seekbar{display:flex!important;}" +
+        ".plyr.via-ui-on #via-missav-seekbar,.plyr:not(.plyr--hide-controls) #via-missav-seekbar{display:flex!important;}" +
         "#via-missav-seekbar .via-seek-group{display:flex;align-items:center;gap:2px;}" +
         "#via-missav-seekbar button{appearance:none;-webkit-appearance:none;background:transparent;border:0;color:inherit;padding:6px 8px;margin:0;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:40px;line-height:1;}" +
         "#via-missav-seekbar button svg{display:block;}" +
@@ -572,7 +599,6 @@
         "@keyframes via-seek-fade{0%{opacity:0}10%{opacity:1}65%{opacity:1}100%{opacity:0}}" +
         "@keyframes via-chevron{0%{opacity:0;transform:scale(.7)}35%{opacity:1;transform:scale(1)}100%{opacity:.35;transform:scale(1)}}" +
         "@keyframes via-play-pulse{0%{transform:translate(-50%,-50%) scale(.82);opacity:.55}60%{transform:translate(-50%,-50%) scale(1.06);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}";
-      (document.head || document.documentElement).appendChild(style);
     }
 
     function chevrons(dir) {
@@ -679,7 +705,7 @@
       removeLegacyLayer();
       if (!isWatchPage()) return null;
       host = videoHost();
-      root = playerRoot();
+      root = plyrEl() || playerRoot();
       if (!host || !root) return null;
       if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
         host.style.position = "relative";
@@ -726,26 +752,97 @@
       }, 3200);
     }
 
-    function setUi(shown) {
-      var root = playerRoot();
+    function controlsEl() {
       var player = window.player;
-      if (!isWatchPage()) return;
-      uiShown = !!shown;
-      ensureOverlay();
+      var root = plyrEl() || playerRoot();
+      if (player && player.elements && player.elements.controls) return player.elements.controls;
+      return root && root.querySelector(".plyr__controls");
+    }
+
+    function controlsVisible() {
+      var root = plyrEl() || playerRoot();
+      var bar = controlsEl();
+      if (root && root.classList.contains("via-ui-on")) return true;
+      if (bar) {
+        if (bar.hidden) return false;
+        if (bar.getAttribute("hidden") !== null) return false;
+      }
+      if (root) return !root.classList.contains("plyr--hide-controls");
+      return uiShown;
+    }
+
+    function paintControls(shown) {
+      var root = plyrEl() || playerRoot();
+      var bar = controlsEl();
       if (root && root.classList) {
-        if (uiShown) {
-          root.classList.add("via-ui-on");
+        if (shown) {
+          root.classList.add("via-ui-on", "plyr--hover", "plyr--full-ui");
           root.classList.remove("plyr--hide-controls");
         } else {
-          root.classList.remove("via-ui-on");
+          root.classList.remove("via-ui-on", "plyr--hover");
           root.classList.add("plyr--hide-controls");
         }
       }
-      if (player && typeof player.toggleControls === "function") {
-        try {
-          player.toggleControls(uiShown);
-        } catch (e) {}
+      if (!bar) return;
+      if (shown) {
+        bar.hidden = false;
+        bar.removeAttribute("hidden");
+        bar.style.removeProperty("display");
+        bar.style.setProperty("display", "flex", "important");
+        bar.style.setProperty("opacity", "1", "important");
+        bar.style.setProperty("visibility", "visible", "important");
+        bar.style.setProperty("transform", "none", "important");
+        bar.style.setProperty("pointer-events", "auto", "important");
+      } else {
+        bar.style.setProperty("opacity", "0", "important");
+        bar.style.setProperty("pointer-events", "none", "important");
       }
+    }
+
+    function applyChrome(shown) {
+      var player = window.player;
+      paintControls(shown);
+      if (!player || !player.config) return;
+      try {
+        player.config.hideControls = !shown;
+        if (typeof player.toggleControls === "function") player.toggleControls(shown);
+      } catch (e) {}
+      paintControls(shown);
+    }
+
+    function watchPlyr() {
+      var root = plyrEl();
+      var player = window.player;
+      if (root && !root.__viaUiWatch) {
+        root.__viaUiWatch = true;
+        new MutationObserver(function () {
+          if (uiShown) paintControls(true);
+        }).observe(root, { attributes: true, attributeFilter: ["class", "hidden"] });
+      }
+      if (!player || player.__viaUiEvents || typeof player.on !== "function") return;
+      player.__viaUiEvents = true;
+      try {
+        player.on("controlshidden", function () {
+          if (uiShown) paintControls(true);
+        });
+        player.on("controlsshown", function () {
+          if (!uiShown) paintControls(false);
+        });
+      } catch (e) {}
+    }
+
+    function setUi(shown) {
+      if (!isWatchPage()) return;
+      uiShown = !!shown;
+      ensureOverlay();
+      watchPlyr();
+      applyChrome(uiShown);
+      window.setTimeout(function () {
+        applyChrome(uiShown);
+      }, 40);
+      window.setTimeout(function () {
+        applyChrome(uiShown);
+      }, 200);
       if (uiShown) scheduleHide();
     }
 
@@ -794,7 +891,7 @@
         scheduleHide();
       });
       video.addEventListener("pause", function () {
-        setUi(true);
+        if (userPlayed) setUi(true);
       });
     }
 
@@ -836,12 +933,7 @@
       }
       pending = window.setTimeout(function () {
         pending = 0;
-        if (!userPlayed) {
-          playNow();
-          setUi(true);
-          return;
-        }
-        setUi(!uiShown);
+        setUi(!controlsVisible());
       }, GAP);
     }
 
@@ -897,23 +989,26 @@
     hookVideo();
     if (isWatchPage()) {
       ensureOverlay();
-      setUi(true);
+      setUi(false);
     }
     window.setInterval(function () {
       removeLegacyLayer();
+      injectStyle();
       if (!isWatchPage()) return;
       disablePlyr();
       hookVideo();
+      watchPlyr();
       ensureOverlay();
+      paintControls(uiShown);
     }, 800);
   }
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "3") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "5") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "3");
+      document.documentElement.setAttribute("data-via-missav-gesture", "5");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
