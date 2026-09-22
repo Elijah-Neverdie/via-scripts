@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.5
-// @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
+// @version      1.4.6
+// @description  单击开关控制条，双击快进快退，左右滑动调节亮度音量，长按拖动预览进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 10) return;
-    window.__viaMissavGestureHook = 10;
+    if (window.__viaMissavGestureHook === 11) return;
+    window.__viaMissavGestureHook = 11;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -377,6 +377,14 @@
     var seekTimer = 0;
     var sideTimer = 0;
     var inlineArea = 0;
+    var brightLevel = 50;
+    var slide = null;
+    var longTimer = 0;
+    var skipTap = 0;
+    var thumbCues = null;
+    var thumbLoading = false;
+    var thumbKey = "";
+    var thumbSheets = {};
 
     function videoEl() {
       return document.querySelector("video.player, #player video, .plyr video, video");
@@ -585,7 +593,8 @@
         ".plyr.via-ui-on.plyr--hide-controls .plyr__controls[hidden]{" +
         "display:flex!important;opacity:1!important;visibility:visible!important;" +
         "pointer-events:auto!important;transform:none!important;translate:none!important;}" +
-        "#via-missav-hud{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483000;pointer-events:none;overflow:hidden;display:none;}" +
+        ".plyr__video-wrapper,video.player,#player video{touch-action:none;}" +
+        "#via-missav-hud{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483000;pointer-events:none;overflow:visible;display:none;}" +
         "#via-missav-hud.via-hud-on{display:block;}" +
         "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:33.333%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
         "#via-missav-hud .via-side.left{left:0;}" +
@@ -594,6 +603,15 @@
         "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;font-weight:400;letter-spacing:0;line-height:1;" +
         "padding:0;margin:0;border:0;border-radius:0;background:transparent;" +
         "text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.65);}" +
+        "#via-missav-hud .via-level{position:absolute;top:50%;transform:translateY(-50%);color:#fff;font-weight:400;line-height:1.25;text-align:center;display:none;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.65);}" +
+        "#via-missav-hud .via-level.on{display:block;}" +
+        "#via-missav-hud .via-level.left{left:16%;}" +
+        "#via-missav-hud .via-level.right{right:16%;}" +
+        "#via-missav-hud .via-level b{display:block;font-weight:400;margin-top:6px;}" +
+        "#via-missav-hud .via-scrub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:none;text-align:center;pointer-events:none;}" +
+        "#via-missav-hud .via-scrub.on{display:block;}" +
+        "#via-missav-hud .via-pip{margin:0 auto;background:#000 center no-repeat;}" +
+        "#via-missav-hud .via-scrub-time{margin-top:8px;color:#fff;font-weight:400;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.65);}" +
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
         "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
@@ -749,6 +767,8 @@
     function hideHud() {
       var wrap = document.getElementById("via-missav-hud");
       if (!wrap) return;
+      if (slide && slide.mode) return;
+      if (wrap.querySelector(".via-level.on, .via-scrub.on")) return;
       wrap.classList.remove("via-hud-on");
       wrap.style.width = "0";
       wrap.style.height = "0";
@@ -781,6 +801,13 @@
           '<div class="via-side left"><div class="via-face"></div></div>' +
           '<div class="via-side right"><div class="via-face"></div></div>' +
           '<div class="via-flash" aria-hidden="true"></div>';
+      }
+      if (!wrap.querySelector(".via-scrub")) {
+        wrap.insertAdjacentHTML(
+          "beforeend",
+          '<div class="via-level left"></div><div class="via-level right"></div>' +
+            '<div class="via-scrub"><div class="via-pip"></div><div class="via-scrub-time"></div></div>'
+        );
       }
       flash = wrap.querySelector(".via-flash");
       if (flash && !flash.innerHTML) flash.innerHTML = playSvg();
@@ -987,6 +1014,7 @@
 
     function onTap(event) {
       if (!isWatchPage()) return;
+      if (Date.now() < skipTap) return;
       if (chrome(event.target) || !inPlayer(event.target)) return;
       if (event.type === "touchend" && event.touches && event.touches.length) return;
       rememberPoint(event);
@@ -1262,8 +1290,596 @@
       );
     }
 
+    function mediaTime() {
+      var player = window.player;
+      var video = videoEl();
+      if (player && typeof player.currentTime === "number" && isFinite(player.currentTime)) return player.currentTime;
+      return video ? video.currentTime || 0 : 0;
+    }
+
+    function mediaDuration() {
+      var player = window.player;
+      var video = videoEl();
+      var d = player && player.duration;
+      if (d && isFinite(d) && d > 0) return d;
+      d = video && video.duration;
+      return d && isFinite(d) ? d : 0;
+    }
+
+    function seekTo(time) {
+      var player = window.player;
+      var video = videoEl();
+      time = clampTime(time, mediaDuration());
+      try {
+        if (player && typeof player.currentTime === "number") player.currentTime = time;
+      } catch (e) {}
+      if (video) {
+        try {
+          video.currentTime = time;
+        } catch (e2) {}
+      }
+    }
+
+    function formatClock(time) {
+      var total = Math.max(0, Math.floor(time || 0));
+      var h = Math.floor(total / 3600);
+      var m = Math.floor((total % 3600) / 60);
+      var sec = total % 60;
+      function pad(n) {
+        return (n < 10 ? "0" : "") + n;
+      }
+      if (h > 0) return h + ":" + pad(m) + ":" + pad(sec);
+      return pad(m) + ":" + pad(sec);
+    }
+
+    function applyBright() {
+      var veil = document.getElementById("via-missav-veil");
+      var mount = fsNode() || document.body || document.documentElement;
+      var rect;
+      var level = brightLevel;
+      var dark;
+      if (!isWatchPage()) {
+        if (veil) veil.style.display = "none";
+        return;
+      }
+      if (!veil) {
+        veil = document.createElement("div");
+        veil.id = "via-missav-veil";
+        veil.setAttribute("data-via-missav-keep", "1");
+      }
+      if (mount && veil.parentElement !== mount) mount.appendChild(veil);
+      if (Math.abs(level - 50) < 1) {
+        veil.style.display = "none";
+        return;
+      }
+      rect = boxRect();
+      dark = level < 50;
+      veil.style.position = "fixed";
+      veil.style.left = (rect.left || 0) + "px";
+      veil.style.top = (rect.top || 0) + "px";
+      veil.style.width = (rect.width || 0) + "px";
+      veil.style.height = (rect.height || 0) + "px";
+      veil.style.pointerEvents = "none";
+      veil.style.zIndex = "2147483000";
+      veil.style.display = "block";
+      veil.style.background = dark ? "#000" : "#fff";
+      veil.style.opacity = dark
+        ? String(((50 - level) / 50) * 0.72)
+        : String(((level - 50) / 50) * 0.42);
+    }
+
+    function showLevel(side, label, pct) {
+      var wrap = ensureOverlay();
+      var node;
+      var other;
+      if (!wrap) return;
+      pinHud(wrap);
+      node = wrap.querySelector(".via-level." + side);
+      other = wrap.querySelector(".via-level." + (side === "left" ? "right" : "left"));
+      if (other) {
+        other.classList.remove("on");
+        other.textContent = "";
+      }
+      if (!node) return;
+      node.style.fontSize = titlePx() + "px";
+      node.textContent = "";
+      node.appendChild(document.createTextNode(label));
+      var num = document.createElement("b");
+      num.textContent = pct + "%";
+      node.appendChild(num);
+      node.classList.add("on");
+    }
+
+    function hideLevels() {
+      var wrap = document.getElementById("via-missav-hud");
+      var nodes;
+      var i;
+      if (!wrap) return;
+      nodes = wrap.querySelectorAll(".via-level");
+      for (i = 0; i < nodes.length; i++) nodes[i].classList.remove("on");
+      if (!wrap.querySelector(".via-side.on, .via-flash.on, .via-scrub.on")) hideHud();
+    }
+
+    function hideScrub() {
+      var wrap = document.getElementById("via-missav-hud");
+      var scrub = wrap && wrap.querySelector(".via-scrub");
+      if (scrub) scrub.classList.remove("on");
+      if (wrap && !wrap.querySelector(".via-side.on, .via-flash.on, .via-level.on")) hideHud();
+    }
+
+    function vttSeconds(text) {
+      var parts = String(text || "").trim().split(":");
+      var h = 0;
+      var m = 0;
+      var s = 0;
+      if (parts.length >= 3) {
+        h = parseInt(parts[0], 10) || 0;
+        m = parseInt(parts[1], 10) || 0;
+        s = parseFloat(parts[2]) || 0;
+      } else if (parts.length === 2) {
+        m = parseInt(parts[0], 10) || 0;
+        s = parseFloat(parts[1]) || 0;
+      } else {
+        s = parseFloat(parts[0]) || 0;
+      }
+      return h * 3600 + m * 60 + s;
+    }
+
+    function resolveUrl(base, rel) {
+      try {
+        return new URL(rel, base).href;
+      } catch (e) {
+        return rel;
+      }
+    }
+
+    function parseVtt(text, vttUrl) {
+      var lines = String(text || "").replace(/\r/g, "").split("\n");
+      var cues = [];
+      var i = 0;
+      var line;
+      var times;
+      var body;
+      var xywh;
+      var start;
+      var end;
+      var raw;
+      while (i < lines.length) {
+        line = lines[i].trim();
+        if (line.indexOf("-->") === -1) {
+          i += 1;
+          continue;
+        }
+        times = line.split("-->");
+        start = vttSeconds(times[0]);
+        end = vttSeconds((times[1] || "").split(/\s/)[0]);
+        i += 1;
+        body = "";
+        while (i < lines.length && lines[i].trim()) {
+          body += (body ? "\n" : "") + lines[i].trim();
+          i += 1;
+        }
+        raw = body.split(/\s/)[0] || "";
+        xywh = raw.match(/#xywh=(\d+),(\d+),(\d+),(\d+)/i);
+        cues.push({
+          start: start,
+          end: end > start ? end : start,
+          url: resolveUrl(vttUrl, raw.split("#")[0]),
+          xywh: xywh ? { x: +xywh[1], y: +xywh[2], w: +xywh[3], h: +xywh[4] } : null
+        });
+      }
+      return cues;
+    }
+
+    function rememberVtt(url) {
+      if (!url || !/\.vtt(\?|#|$)/i.test(String(url))) return;
+      window.__viaVtt = String(url);
+    }
+
+    function vttSources() {
+      var list = [];
+      var seen = {};
+      var player = window.player;
+      var src;
+      var media;
+      var match;
+      var base;
+      var parts;
+      var slug;
+      var i;
+      function add(url) {
+        if (!url || seen[url]) return;
+        seen[url] = 1;
+        list.push(url);
+      }
+      if (window.__viaVtt) add(window.__viaVtt);
+      src = player && player.config && player.config.previewThumbnails && player.config.previewThumbnails.src;
+      if (typeof src === "string") add(src);
+      else if (src && src.length) {
+        for (i = 0; i < src.length; i++) if (typeof src[i] === "string") add(src[i]);
+      }
+      media = window.__viaMediaUrl || "";
+      try {
+        if (typeof readMedia === "function") media = readMedia() || media;
+      } catch (e) {}
+      match = String(media).match(/^(https?:\/\/[^/?#]+\/[0-9a-f-]{36})/i);
+      if (match) {
+        base = match[1];
+        add(base + "/thumbnails.vtt");
+        add(base + "/thumbnail.vtt");
+        add(base + "/preview.vtt");
+        add(base + "/storyboard.vtt");
+        add(base + "/seek/thumbnails.vtt");
+        add(base + "/640x360/thumbnails.vtt");
+      }
+      parts = (location.pathname || "").split("/");
+      slug = parts[parts.length - 1] || "";
+      if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/i.test(slug)) {
+        add("https://fourhoi.com/" + slug + "/preview.vtt");
+        add("https://fourhoi.com/" + slug + "/thumbnails.vtt");
+        add("https://fourhoi.com/" + slug + "/seek/thumbnails.vtt");
+      }
+      return list;
+    }
+
+    function loadThumbCues() {
+      var sources;
+      var key;
+      if (thumbCues || thumbLoading) return;
+      sources = vttSources();
+      if (!sources.length) return;
+      key = sources.join("|");
+      if (key === thumbKey) return;
+      thumbKey = key;
+      thumbLoading = true;
+      tryNext(0);
+      function tryNext(index) {
+        var xhr;
+        if (thumbCues || index >= sources.length) {
+          thumbLoading = false;
+          return;
+        }
+        xhr = new XMLHttpRequest();
+        xhr.open("GET", sources[index], true);
+        xhr.onload = function () {
+          var text = xhr.responseText || "";
+          if (xhr.status >= 200 && xhr.status < 300 && /WEBVTT/i.test(text) && text.indexOf("-->") !== -1) {
+            thumbCues = parseVtt(text, sources[index]);
+            thumbLoading = false;
+            window.__viaVtt = sources[index];
+            return;
+          }
+          tryNext(index + 1);
+        };
+        xhr.onerror = function () {
+          tryNext(index + 1);
+        };
+        try {
+          xhr.send();
+        } catch (e) {
+          tryNext(index + 1);
+        }
+      }
+    }
+
+    function adoptPlyrThumbs() {
+      var pt = window.player && window.player.previewThumbnails;
+      var raw;
+      var out = [];
+      var i;
+      var item;
+      var text;
+      var xywh;
+      var url;
+      if (!pt) return null;
+      raw = pt.thumbnails;
+      if (!raw || !raw.length) {
+        try {
+          if (!pt.loaded && typeof pt.load === "function") pt.load();
+        } catch (e) {}
+        return null;
+      }
+      for (i = 0; i < raw.length; i++) {
+        item = raw[i] || {};
+        text = item.text || (item.frames && item.frames[0] && item.frames[0].text) || item.url || "";
+        if (!text) continue;
+        xywh = String(text).match(/#xywh=(\d+),(\d+),(\d+),(\d+)/i);
+        url = String(text).split("#")[0].trim();
+        out.push({
+          start: item.start != null ? item.start : item.startTime || 0,
+          end: item.end != null ? item.end : item.endTime || 0,
+          url: url,
+          xywh: xywh ? { x: +xywh[1], y: +xywh[2], w: +xywh[3], h: +xywh[4] } : null
+        });
+      }
+      return out.length ? out : null;
+    }
+
+    function cueAt(time) {
+      var i;
+      var best = null;
+      if (!thumbCues || !thumbCues.length) thumbCues = adoptPlyrThumbs();
+      if (!thumbCues || !thumbCues.length) return null;
+      for (i = 0; i < thumbCues.length; i++) {
+        if (thumbCues[i].start <= time) best = thumbCues[i];
+        else break;
+      }
+      return best || thumbCues[0];
+    }
+
+    function paintThumb(pip, cue, viewW) {
+      function place(sheet) {
+        var scale;
+        if (!cue.xywh) {
+          pip.style.width = viewW + "px";
+          pip.style.height = Math.round((viewW * 9) / 16) + "px";
+          pip.style.backgroundImage = 'url("' + cue.url + '")';
+          pip.style.backgroundSize = "cover";
+          pip.style.backgroundPosition = "center";
+          return;
+        }
+        scale = viewW / (cue.xywh.w || 1);
+        pip.style.width = Math.round(viewW) + "px";
+        pip.style.height = Math.round(cue.xywh.h * scale) + "px";
+        pip.style.backgroundImage = 'url("' + cue.url + '")';
+        pip.style.backgroundRepeat = "no-repeat";
+        if (sheet && sheet.w) {
+          pip.style.backgroundSize = Math.round(sheet.w * scale) + "px " + Math.round(sheet.h * scale) + "px";
+        }
+        pip.style.backgroundPosition = Math.round(-cue.xywh.x * scale) + "px " + Math.round(-cue.xywh.y * scale) + "px";
+      }
+      if (!cue || !cue.url) {
+        pip.style.backgroundImage = "none";
+        pip.style.width = viewW + "px";
+        pip.style.height = Math.round((viewW * 9) / 16) + "px";
+        return;
+      }
+      if (!cue.xywh || thumbSheets[cue.url]) {
+        place(thumbSheets[cue.url]);
+        return;
+      }
+      place(null);
+      var img = new Image();
+      img.onload = function () {
+        thumbSheets[cue.url] = { w: img.naturalWidth, h: img.naturalHeight };
+        if (slide && slide.mode === "scrub") place(thumbSheets[cue.url]);
+      };
+      img.src = cue.url;
+    }
+
+    function showScrub(time) {
+      var wrap = ensureOverlay();
+      var scrub;
+      var pip;
+      var label;
+      var rect;
+      var viewW;
+      var scale = 1;
+      var area;
+      if (!wrap) return;
+      pinHud(wrap);
+      scrub = wrap.querySelector(".via-scrub");
+      pip = wrap.querySelector(".via-pip");
+      label = wrap.querySelector(".via-scrub-time");
+      if (!scrub || !pip || !label) return;
+      rect = boxRect();
+      viewW = Math.max(140, Math.round((rect.width || 320) * 0.42));
+      if (fsNode() && inlineArea) {
+        area = (rect.width || 1) * (rect.height || 1);
+        scale = Math.sqrt(area / inlineArea);
+        if (scale < 1) scale = 1;
+        if (scale > 8) scale = 8;
+      }
+      label.style.fontSize = titlePx() * scale + "px";
+      label.textContent = formatClock(time);
+      paintThumb(pip, cueAt(time), viewW);
+      scrub.classList.add("on");
+    }
+
+    function pointOf(event) {
+      var t = (event.touches && event.touches[0]) || (event.changedTouches && event.changedTouches[0]);
+      if (t) return { x: t.clientX, y: t.clientY };
+      return { x: event.clientX, y: event.clientY };
+    }
+
+    function clearLong() {
+      if (longTimer) {
+        window.clearTimeout(longTimer);
+        longTimer = 0;
+      }
+    }
+
+    function enterScrub() {
+      longTimer = 0;
+      if (!slide || slide.mode) return;
+      slide.mode = "scrub";
+      slide.wasPaused = isPaused();
+      slide.baseTime = mediaTime();
+      slide.time = slide.baseTime;
+      if (!slide.wasPaused) pauseNow();
+      if (pending) {
+        window.clearTimeout(pending);
+        pending = 0;
+      }
+      skipTap = Date.now() + 1200;
+      loadThumbCues();
+      showScrub(slide.baseTime);
+    }
+
+    function updateSlide(dy) {
+      var rect = boxRect();
+      var ratio = -dy / Math.max(1, (rect.height || 1) * 0.85);
+      var video;
+      var vol;
+      if (!slide) return;
+      if (slide.mode === "bright") {
+        brightLevel = Math.max(0, Math.min(100, slide.bright0 + ratio * 100));
+        applyBright();
+        showLevel("left", "亮度", Math.round(brightLevel));
+        return;
+      }
+      if (slide.mode === "vol") {
+        vol = Math.max(0, Math.min(1, slide.vol0 + ratio));
+        video = videoEl();
+        if (video) {
+          video.muted = vol <= 0.001;
+          try {
+            video.volume = vol;
+          } catch (e) {}
+        }
+        showLevel("right", "音量", Math.round(vol * 100));
+      }
+    }
+
+    function updateScrub(dx) {
+      var rect = boxRect();
+      var dur = mediaDuration();
+      var time;
+      if (!slide) return;
+      time = clampTime(slide.baseTime + (dx / Math.max(1, rect.width || 1)) * dur, dur);
+      slide.time = time;
+      seekTo(time);
+      showScrub(time);
+    }
+
+    function onGestureStart(event) {
+      var p;
+      var video;
+      if (!isWatchPage()) return;
+      if (!event.touches || event.touches.length !== 1) return;
+      if (chrome(event.target) || !inPlayer(event.target)) return;
+      p = pointOf(event);
+      video = videoEl();
+      slide = {
+        x: p.x,
+        y: p.y,
+        mode: "",
+        moved: false,
+        bright0: brightLevel,
+        vol0: video ? (video.muted ? 0 : typeof video.volume === "number" ? video.volume : 1) : 1,
+        baseTime: mediaTime(),
+        time: mediaTime()
+      };
+      clearLong();
+      longTimer = window.setTimeout(enterScrub, 500);
+      loadThumbCues();
+      if (event.cancelable) event.preventDefault();
+    }
+
+    function onGestureMove(event) {
+      var p;
+      var dx;
+      var dy;
+      var rect;
+      if (!slide || !event.touches || event.touches.length !== 1) return;
+      p = pointOf(event);
+      dx = p.x - slide.x;
+      dy = p.y - slide.y;
+      if (Math.abs(dx) > 12 || Math.abs(dy) > 12) slide.moved = true;
+      if (slide.mode === "scrub") {
+        if (event.cancelable) event.preventDefault();
+        updateScrub(dx);
+        return;
+      }
+      if (slide.mode === "bright" || slide.mode === "vol") {
+        if (event.cancelable) event.preventDefault();
+        updateSlide(dy);
+        return;
+      }
+      if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+      clearLong();
+      if (Math.abs(dy) <= Math.abs(dx)) return;
+      if (pending) {
+        window.clearTimeout(pending);
+        pending = 0;
+      }
+      skipTap = Date.now() + 900;
+      rect = boxRect();
+      slide.mode = slide.x - rect.left < (rect.width || 1) / 2 ? "bright" : "vol";
+      if (event.cancelable) event.preventDefault();
+      updateSlide(dy);
+    }
+
+    function onGestureEnd(event) {
+      var mode = slide && slide.mode;
+      var moved = slide && slide.moved;
+      var resume = slide && slide.wasPaused === false;
+      clearLong();
+      if (mode === "scrub" || mode === "bright" || mode === "vol" || moved) {
+        skipTap = Date.now() + 700;
+        if (pending) {
+          window.clearTimeout(pending);
+          pending = 0;
+        }
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+      }
+      if (mode === "scrub") {
+        hideScrub();
+        if (resume) playNow();
+      } else if (mode === "bright" || mode === "vol") {
+        window.setTimeout(hideLevels, 450);
+      }
+      slide = null;
+    }
+
+    function hookNet() {
+      var origFetch;
+      var origOpen;
+      if (window.__viaMissavNetHook) return;
+      window.__viaMissavNetHook = 1;
+      if (typeof window.fetch === "function") {
+        origFetch = window.fetch;
+        window.fetch = function (input) {
+          try {
+            rememberVtt(typeof input === "string" ? input : (input && input.url) || "");
+          } catch (e) {}
+          return origFetch.apply(this, arguments);
+        };
+      }
+      if (window.XMLHttpRequest && XMLHttpRequest.prototype) {
+        origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url) {
+          try {
+            rememberVtt(url);
+          } catch (e2) {}
+          return origOpen.apply(this, arguments);
+        };
+      }
+    }
+
+    function scanResources() {
+      var entries;
+      var i;
+      if (!window.performance || !performance.getEntriesByType) return;
+      try {
+        entries = performance.getEntriesByType("resource");
+      } catch (e) {
+        return;
+      }
+      for (i = entries.length - 1; i >= 0; i--) {
+        if (/\.vtt(\?|#|$)/i.test(entries[i].name || "")) {
+          rememberVtt(entries[i].name);
+          return;
+        }
+      }
+    }
+
+    hookNet();
     injectStyle();
     removeLegacyLayer();
+    document.addEventListener("touchstart", onGestureStart, { capture: true, passive: false });
+    document.addEventListener("touchmove", onGestureMove, { capture: true, passive: false });
+    document.addEventListener("touchend", onGestureEnd, { capture: true, passive: false });
+    document.addEventListener("touchcancel", onGestureEnd, { capture: true, passive: false });
+    document.addEventListener(
+      "contextmenu",
+      function (event) {
+        if (!inPlayer(event.target) || chrome(event.target)) return;
+        event.preventDefault();
+      },
+      true
+    );
     document.addEventListener(
       "touchstart",
       function (event) {
@@ -1314,15 +1930,23 @@
       }
       paintControls(uiShown);
       armDownloads();
+      scanResources();
+      applyBright();
+      if (!thumbCues) {
+        thumbCues = adoptPlyrThumbs();
+        if (!thumbCues) loadThumbCues();
+      }
+      var touchHost = videoHost();
+      if (touchHost && touchHost.style) touchHost.style.touchAction = "none";
     }, 800);
   }
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "10") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "11") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "10");
+      document.documentElement.setAttribute("data-via-missav-gesture", "11");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
