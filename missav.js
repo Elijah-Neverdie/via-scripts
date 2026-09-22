@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.3
+// @version      1.4.4
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -1203,7 +1203,49 @@
       'body > div:has(iframe[src*="tsyndicate"]):not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
       'body > div:has(iframe[src*="exoclick"]):not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
       'body > div:has(iframe[src*="juicyads"]):not(:has(video)):not(:has(#player)):not(:has(.plyr)),' +
-      '[data-via-missav-ad="1"]{display:none!important;pointer-events:none!important;height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}';
+      '[data-via-missav-ad="1"],' +
+      '[data-via-missav-looprow="1"]{display:none!important;pointer-events:none!important;height:0!important;min-height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;border:0!important;}';
+  }
+
+  function hideLoopStrip() {
+    var nodes = document.querySelectorAll("button, a, span, div, label, p");
+    var i;
+    var el;
+    var row;
+    var parent;
+    var rect;
+    var hops;
+    if (!isWatchPath()) return;
+    for (i = 0; i < nodes.length; i++) {
+      el = nodes[i];
+      if (!el || isOurUi(el)) continue;
+      if (el.closest && el.closest(".plyr, #player, .plyr__controls, #via-missav-seekbar")) continue;
+      if (!/循环播放/.test(compactText(el)) || compactText(el).length > 8) continue;
+      row = el;
+      hops = 0;
+      while (row.parentElement && row.parentElement !== document.body && hops < 6) {
+        parent = row.parentElement;
+        if (parent.querySelector("h1, video, .plyr, #player")) break;
+        rect = parent.getBoundingClientRect();
+        if (rect.height > 160) break;
+        row = parent;
+        hops += 1;
+      }
+      if (!row || row === document.body) continue;
+      if (row.querySelector && row.querySelector("h1, video, .plyr, #player")) continue;
+      row.setAttribute("data-via-missav-looprow", "1");
+      parent = row.parentElement;
+      if (
+        parent &&
+        parent !== document.body &&
+        !parent.querySelector("h1") &&
+        parent.querySelector(".plyr, #player, video")
+      ) {
+        parent.style.setProperty("padding-bottom", "0", "important");
+        parent.style.setProperty("margin-bottom", "0", "important");
+        parent.style.setProperty("gap", "0", "important");
+      }
+    }
   }
 
   function isWatchPath() {
@@ -1723,6 +1765,7 @@
     scheduleAdSweep.timer = window.setTimeout(function () {
       scheduleAdSweep.timer = 0;
       sweepFloatingAds();
+      hideLoopStrip();
     }, 80);
   }
 
@@ -1739,10 +1782,12 @@
     window.setInterval(function () {
       revealPlayer();
       restoreMistakenContent();
+      hideLoopStrip();
       sweepFloatingAds();
     }, 1000);
     revealPlayer();
     restoreMistakenContent();
+    hideLoopStrip();
     sweepFloatingAds();
   }
 
@@ -1800,6 +1845,7 @@
     sweepFloatingAds();
     hideAdsBelowToolbar();
     stripPlayerOverlays();
+    hideLoopStrip();
   }
 
   function getTitle() {
