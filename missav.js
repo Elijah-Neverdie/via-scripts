@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.1.1
-// @description  分享旁复制按钮、屏蔽按钮下方广告，并拦截播放时的广告跳转
+// @version      1.2.0
+// @description  分享旁复制按钮、屏蔽按钮下方广告，拦截播放时的广告跳转，横屏和全屏保留完整快进快退按钮
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -28,6 +28,7 @@
   var BTN_ID = "via-missav-extra-btn";
   var STYLE_ID = "via-missav-extra-style";
   var AD_STYLE_ID = "via-missav-ad-style";
+  var CTRL_ATTR = "data-via-missav-controls";
   var MAX_TRIES = 40;
   var TRY_EVERY_MS = 400;
   var nativeOpen = window.open;
@@ -297,6 +298,7 @@
     if (el.getAttribute(BTN_ATTR) === "1") return true;
     if (el.getAttribute("data-demo-player") === "1") return true;
     if (el.getAttribute("data-via-missav-keep") === "1") return true;
+    if (el.getAttribute(CTRL_ATTR) === "1") return true;
     if (el.tagName === "VIDEO" || el.tagName === "H1") return true;
     var cls = el.className && el.className.toString ? el.className.toString() : "";
     return /\b(toolbar|missav-shell|tags|info-table|player|video-title)\b/.test(cls);
@@ -555,7 +557,15 @@
       "z-index:2147483647;padding:.65rem 1rem;border-radius:999px;font-size:14px;line-height:1.3;" +
       "background:rgba(46,52,64,.96);color:#eceff4;border:1px solid #4c566a;" +
       "box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;max-width:90vw;}" +
-      "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}";
+      "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}" +
+      "@media (orientation:landscape){[" +
+      CTRL_ATTR +
+      "='1']{display:flex!important;visibility:visible!important;opacity:1!important;}}" +
+      "[" +
+      CTRL_ATTR +
+      "='1'][data-via-missav-fs='1']{display:flex!important;visibility:visible!important;opacity:1!important;" +
+      "position:absolute!important;left:0;right:0;bottom:4.6rem;z-index:4;justify-content:space-between;" +
+      "padding:.35rem .5rem;background:rgba(0,0,0,.62);pointer-events:auto;}";
     parent.appendChild(style);
   }
 
@@ -635,9 +645,148 @@
     return true;
   }
 
+  function classNames(el) {
+    if (!el || !el.classList) return [];
+    return Array.prototype.slice.call(el.classList);
+  }
+
+  function isSmHiddenClass(name) {
+    return /(^|-)sm:hidden$/.test(name || "");
+  }
+
+  function clickSource(el) {
+    var text = "";
+    var names;
+    var i;
+    if (!el || !el.getAttributeNames) return "";
+    names = el.getAttributeNames();
+    for (i = 0; i < names.length; i++) {
+      if (/click/i.test(names[i])) text += " " + (el.getAttribute(names[i]) || "");
+    }
+    return text;
+  }
+
+  function isSeekButton(el) {
+    if (!el || el.tagName !== "BUTTON") return false;
+    if (/currentTime\s*[+\-]=/.test(clickSource(el))) return true;
+    return /^[+\-]?\d+\s*(m|s)$/i.test(compactText(el));
+  }
+
+  function findControlBar() {
+    var buttons = document.querySelectorAll("button");
+    var seekers = [];
+    var i;
+    var el;
+    var count;
+    var best;
+    for (i = 0; i < buttons.length; i++) {
+      if (isSeekButton(buttons[i])) seekers.push(buttons[i]);
+    }
+    if (seekers.length < 4) return null;
+    el = seekers[0];
+    best = null;
+    while (el && el !== document.body) {
+      count = 0;
+      for (i = 0; i < seekers.length; i++) {
+        if (el.contains(seekers[i])) count += 1;
+      }
+      if (count >= 4) best = el;
+      if (classNames(el).some(isSmHiddenClass) && count >= 4) return el;
+      el = el.parentElement;
+    }
+    return best;
+  }
+
+  function savedHideClasses(bar) {
+    var saved = bar.getAttribute("data-via-missav-smhide");
+    if (saved !== null) return saved.split(/\s+/).filter(Boolean);
+    saved = classNames(bar).filter(isSmHiddenClass);
+    bar.setAttribute("data-via-missav-smhide", saved.join(" "));
+    return saved;
+  }
+
+  function fullscreenRoot() {
+    var fs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fs) return fs;
+    return document.querySelector(
+      ".plyr--fullscreen-active, .plyr--fullscreen-fallback"
+    );
+  }
+
+  function isPhoneLandscape() {
+    var touch = navigator.maxTouchPoints > 0;
+    var landscape = false;
+    try {
+      landscape = window.matchMedia("(orientation: landscape)").matches;
+    } catch (e) {
+      landscape = window.innerWidth > window.innerHeight;
+    }
+    return touch && landscape;
+  }
+
+  function rememberControlHome(bar) {
+    if (bar.__viaParent) return;
+    bar.__viaParent = bar.parentElement;
+    bar.__viaNext = bar.nextSibling;
+  }
+
+  function restoreControlHome(bar) {
+    var parent = bar.__viaParent;
+    if (!parent || bar.parentElement === parent) {
+      bar.removeAttribute("data-via-missav-fs");
+      return;
+    }
+    if (bar.__viaNext && bar.__viaNext.parentElement === parent) {
+      parent.insertBefore(bar, bar.__viaNext);
+    } else {
+      parent.appendChild(bar);
+    }
+    bar.removeAttribute("data-via-missav-fs");
+  }
+
+  function placeControlBar(bar, force) {
+    var root = force ? fullscreenRoot() : null;
+    if (root) {
+      rememberControlHome(bar);
+      if (bar.parentElement !== root) root.appendChild(bar);
+      bar.setAttribute("data-via-missav-fs", "1");
+      return;
+    }
+    restoreControlHome(bar);
+  }
+
+  function hookPlayerFullscreen() {
+    var player = window.player;
+    if (!player || player.__viaFsHook || typeof player.on !== "function") return;
+    player.__viaFsHook = true;
+    try {
+      player.on("enterfullscreen", keepLandscapeControls);
+      player.on("exitfullscreen", keepLandscapeControls);
+    } catch (e) {}
+  }
+
+  function keepLandscapeControls() {
+    var bar = findControlBar();
+    var hideClasses;
+    var i;
+    var force;
+    hookPlayerFullscreen();
+    if (!bar) return;
+    bar.setAttribute(CTRL_ATTR, "1");
+    hideClasses = savedHideClasses(bar);
+    force = isPhoneLandscape() || !!fullscreenRoot();
+    if (force) {
+      for (i = 0; i < hideClasses.length; i++) bar.classList.remove(hideClasses[i]);
+    } else {
+      for (i = 0; i < hideClasses.length; i++) bar.classList.add(hideClasses[i]);
+    }
+    placeControlBar(bar, force);
+  }
+
   function startDomWork() {
     insertCopyButton();
     hideKnownAds();
+    keepLandscapeControls();
     injectAdCss();
 
     var tries = 0;
@@ -645,6 +794,7 @@
       tries += 1;
       insertCopyButton();
       hideKnownAds();
+      keepLandscapeControls();
       if (tries >= MAX_TRIES) window.clearInterval(timer);
     }, TRY_EVERY_MS);
 
@@ -655,8 +805,14 @@
       last = now;
       insertCopyButton();
       hideKnownAds();
+      keepLandscapeControls();
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
+
+    window.addEventListener("orientationchange", keepLandscapeControls);
+    window.addEventListener("resize", keepLandscapeControls);
+    document.addEventListener("fullscreenchange", keepLandscapeControls);
+    document.addEventListener("webkitfullscreenchange", keepLandscapeControls);
   }
 
   installOpenHook();
