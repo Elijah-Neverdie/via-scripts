@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.2.0
-// @description  分享旁复制按钮、屏蔽按钮下方广告，拦截播放时的广告跳转，横屏和全屏保留完整快进快退按钮
+// @version      1.3.0
+// @description  分享旁复制按钮、屏蔽按钮下方广告，跳过首次播放弹出的广告页并直接播放，横屏和全屏保留完整快进快退按钮
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -53,7 +53,7 @@
   }
 
   function isMissavHost(host) {
-    return /(^|\.)(missav\.(ai|com|ws|live|fans|media)|thisav\.com)$/i.test(
+    return /(^|\.)(missav\.(ai|com|ws|live|fans|media|movie)|thisav\.com)$/i.test(
       host || ""
     );
   }
@@ -158,19 +158,112 @@
     }, 30);
   }
 
+  function fakeClosedWindow() {
+    return {
+      closed: true,
+      close: function () {},
+      focus: function () {},
+      blur: function () {},
+      opener: null,
+      location: { href: "about:blank" }
+    };
+  }
+
   function blockedOpen(url) {
     if (isSafeOpen(url) && !isAdUrl(url)) {
       try {
         return nativeOpen.apply(window, arguments);
       } catch (e) {
-        return null;
+        return fakeClosedWindow();
       }
     }
     schedulePlay();
-    return null;
+    return fakeClosedWindow();
+  }
+
+  function pageOpenHook() {
+    if (window.__viaMissavOpenHook) return;
+    window.__viaMissavOpenHook = true;
+    var native = window.open;
+    function fake() {
+      return {
+        closed: true,
+        close: function () {},
+        focus: function () {},
+        blur: function () {},
+        opener: null,
+        location: { href: "about:blank" }
+      };
+    }
+    function ownHost(host) {
+      return /(^|\.)(missav\.(ai|com|ws|live|fans|media|movie)|thisav\.com)$/i.test(
+        host || ""
+      );
+    }
+    function shouldBlock(url) {
+      if (!url) return true;
+      try {
+        var u = new URL(String(url), location.href);
+        if (u.protocol === "javascript:" || u.href === "about:blank") return false;
+        return !ownHost(u.hostname);
+      } catch (e) {
+        return true;
+      }
+    }
+    function blocked(url) {
+      if (!shouldBlock(url)) {
+        try {
+          return native.apply(window, arguments);
+        } catch (e2) {
+          return fake();
+        }
+      }
+      try {
+        if (window.player && typeof window.player.play === "function") {
+          window.player.play();
+        }
+      } catch (e3) {}
+      var v = document.querySelector("video.player, video");
+      if (v && v.paused && v.play) {
+        var maybe = v.play();
+        if (maybe && maybe.catch) maybe.catch(function () {});
+      }
+      return fake();
+    }
+    try {
+      Object.defineProperty(window, "open", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: blocked
+      });
+    } catch (e4) {
+      window.open = blocked;
+    }
+    window.setInterval(function () {
+      if (window.open !== blocked) {
+        try {
+          window.open = blocked;
+        } catch (e5) {}
+      }
+    }, 600);
+  }
+
+  function injectPageOpenHook() {
+    try {
+      if (document.documentElement.getAttribute("data-via-missav-hooked") === "1") {
+        return;
+      }
+      document.documentElement.setAttribute("data-via-missav-hooked", "1");
+      var script = document.createElement("script");
+      script.textContent = "(" + pageOpenHook.toString() + ")();";
+      document.documentElement.appendChild(script);
+      if (script.parentNode) script.parentNode.removeChild(script);
+    } catch (e) {}
   }
 
   function installOpenHook() {
+    injectPageOpenHook();
     try {
       Object.defineProperty(window, "open", {
         configurable: true,
@@ -183,6 +276,7 @@
     }
     window.setInterval(function () {
       if (window.open !== blockedOpen) window.open = blockedOpen;
+      injectPageOpenHook();
     }, 800);
   }
 
@@ -248,17 +342,71 @@
     } catch (e) {}
   }
 
+  function isPlayerChrome(node) {
+    if (!node || !node.closest) return false;
+    return Boolean(
+      node.closest(".plyr__controls, .plyr__menu, [" + CTRL_ATTR + "], #" + BTN_ID)
+    );
+  }
+
+  function hasPopHandler(node) {
+    var el = node;
+    var names;
+    var i;
+    var val;
+    while (el && el !== document.documentElement) {
+      if (el.getAttributeNames) {
+        names = el.getAttributeNames();
+        for (i = 0; i < names.length; i++) {
+          val = el.getAttribute(names[i]) || "";
+          if (/\bpop\s*\(/.test(val)) return true;
+        }
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+
+  function disablePopHandlers() {
+    var nodes = document.querySelectorAll("*");
+    var i;
+    var n;
+    var el;
+    var names;
+    var val;
+    for (i = 0; i < nodes.length; i++) {
+      el = nodes[i];
+      if (!el.getAttributeNames) continue;
+      names = el.getAttributeNames();
+      for (n = 0; n < names.length; n++) {
+        val = el.getAttribute(names[n]) || "";
+        if (/\bpop\s*\(/.test(val) && /click|keyup|keydown|touch/i.test(names[n])) {
+          el.removeAttribute(names[n]);
+        }
+      }
+    }
+  }
+
   function installClickGuard() {
     document.addEventListener(
       "click",
       function (event) {
         var target = event.target;
+        var video;
         if (!inPlayer(target)) return;
-        playerClickUntil = Date.now() + 1600;
+        playerClickUntil = Date.now() + 2000;
+        if (isPlayerChrome(target)) return;
         var link = target.closest ? target.closest("a") : null;
         if (link && shouldBlockNavNow(link.href || link.getAttribute("href"))) {
           event.preventDefault();
-          event.stopPropagation();
+          event.stopImmediatePropagation();
+          schedulePlay();
+          return;
+        }
+        video = document.querySelector("video.player, #player video, video");
+        if (hasPopHandler(target) && (!video || video.paused)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
           schedulePlay();
         }
       },
@@ -786,6 +934,7 @@
   function startDomWork() {
     insertCopyButton();
     hideKnownAds();
+    disablePopHandlers();
     keepLandscapeControls();
     injectAdCss();
 
@@ -794,6 +943,7 @@
       tries += 1;
       insertCopyButton();
       hideKnownAds();
+      disablePopHandlers();
       keepLandscapeControls();
       if (tries >= MAX_TRIES) window.clearInterval(timer);
     }, TRY_EVERY_MS);
@@ -805,6 +955,7 @@
       last = now;
       insertCopyButton();
       hideKnownAds();
+      disablePopHandlers();
       keepLandscapeControls();
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
@@ -818,6 +969,7 @@
   installOpenHook();
   installLocationHooks();
   installClickGuard();
+  disablePopHandlers();
   injectAdCss();
 
   if (document.readyState === "loading") {
