@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.7
-// @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节音量，长按拖动进度
+// @version      1.4.8
+// @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 12) return;
-    window.__viaMissavGestureHook = 12;
+    if (window.__viaMissavGestureHook === 13) return;
+    window.__viaMissavGestureHook = 13;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -382,6 +382,11 @@
     var brightSentAt = 0;
     var brightTimer = 0;
     var BRIGHT_URL = "http://127.0.0.1:27182/via-missav-bright";
+    var volRaw = 0;
+    var volMax = 150;
+    var volSentAt = 0;
+    var volTimer = 0;
+    var VOL_URL = "http://127.0.0.1:27182/via-missav-vol";
     var slide = null;
     var longTimer = 0;
     var skipTap = 0;
@@ -1386,6 +1391,54 @@
       else brightTimer = window.setTimeout(send, wait);
     }
 
+    function volPercent(raw) {
+      return Math.max(0, Math.min(100, Math.round((raw / volMax) * 100)));
+    }
+
+    function readSystemVol() {
+      fetch(VOL_URL, { cache: "no-store" })
+        .then(function (response) {
+          return response.text();
+        })
+        .then(function (text) {
+          var parts = String(text).trim().split(/\s+/);
+          var n = parseInt(parts[0], 10);
+          var max = parseInt(parts[1], 10);
+          if (isFinite(max) && max > 0) volMax = max;
+          if (!isFinite(n)) return;
+          if (slide && slide.mode === "vol") return;
+          volRaw = Math.max(0, Math.min(volMax, n));
+        })
+        .catch(function () {});
+    }
+
+    function writeSystemVol(raw, force) {
+      raw = Math.max(0, Math.min(volMax, Math.round(raw)));
+      volRaw = raw;
+      if (!force && volTimer) {
+        if (slide) slide.pendingVol = raw;
+        return;
+      }
+      if (volTimer) {
+        window.clearTimeout(volTimer);
+        volTimer = 0;
+      }
+      function send() {
+        var value = raw;
+        volTimer = 0;
+        volSentAt = Date.now();
+        if (slide && slide.pendingVol != null) {
+          value = slide.pendingVol;
+          slide.pendingVol = null;
+        }
+        volRaw = value;
+        fetch(VOL_URL + "?v=" + value, { cache: "no-store" }).catch(function () {});
+      }
+      var wait = force ? 0 : Math.max(0, 90 - (Date.now() - volSentAt));
+      if (wait <= 0) send();
+      else volTimer = window.setTimeout(send, wait);
+    }
+
     function showLevel(side, label, pct) {
       var wrap = ensureOverlay();
       var node;
@@ -1721,8 +1774,6 @@
     function updateSlide(dy) {
       var rect = boxRect();
       var ratio = -dy / Math.max(1, (rect.height || 1) * 0.85);
-      var video;
-      var vol;
       if (!slide) return;
       if (slide.mode === "bright") {
         writeSystemBright(slide.bright0 + ratio * brightMax, false);
@@ -1730,15 +1781,8 @@
         return;
       }
       if (slide.mode === "vol") {
-        vol = Math.max(0, Math.min(1, slide.vol0 + ratio));
-        video = videoEl();
-        if (video) {
-          video.muted = vol <= 0.001;
-          try {
-            video.volume = vol;
-          } catch (e) {}
-        }
-        showLevel("right", "音量", Math.round(vol * 100));
+        writeSystemVol(slide.vol0 + ratio * volMax, false);
+        showLevel("right", "音量", volPercent(volRaw));
       }
     }
 
@@ -1755,19 +1799,17 @@
 
     function onGestureStart(event) {
       var p;
-      var video;
       if (!isWatchPage()) return;
       if (!event.touches || event.touches.length !== 1) return;
       if (chrome(event.target) || !inPlayer(event.target)) return;
       p = pointOf(event);
-      video = videoEl();
       slide = {
         x: p.x,
         y: p.y,
         mode: "",
         moved: false,
         bright0: brightRaw,
-        vol0: video ? (video.muted ? 0 : typeof video.volume === "number" ? video.volume : 1) : 1,
+        vol0: volRaw,
         baseTime: mediaTime(),
         time: mediaTime()
       };
@@ -1827,6 +1869,9 @@
       if (mode === "bright") {
         writeSystemBright(slide && slide.pendingBright != null ? slide.pendingBright : brightRaw, true);
       }
+      if (mode === "vol") {
+        writeSystemVol(slide && slide.pendingVol != null ? slide.pendingVol : volRaw, true);
+      }
       if (mode === "scrub") {
         hideScrub();
         if (resume) playNow();
@@ -1880,6 +1925,7 @@
 
     clearVeil();
     readSystemBright();
+    readSystemVol();
     injectStyle();
     removeLegacyLayer();
     document.addEventListener("touchstart", onGestureStart, { capture: true, passive: false });
@@ -1946,6 +1992,7 @@
       armDownloads();
       clearVeil();
       if (!(slide && slide.mode === "bright")) readSystemBright();
+      if (!(slide && slide.mode === "vol")) readSystemVol();
       var touchHost = videoHost();
       if (touchHost && touchHost.style) touchHost.style.touchAction = "none";
     }, 800);
@@ -1953,10 +2000,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "12") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "13") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "12");
+      document.documentElement.setAttribute("data-via-missav-gesture", "13");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
