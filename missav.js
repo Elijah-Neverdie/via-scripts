@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.5
-// @description  进页暂停并显示中央播放钮，单击显隐控制条，双击分区快进快退，高级快进条跟随播放器风格
+// @version      1.3.6
+// @description  单击显隐控制条，双击快进快退/播放暂停并在视频上显示反馈图标
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -519,39 +519,52 @@
       else pauseNow();
     }
 
+    function overlayHost() {
+      return (
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.body ||
+        document.documentElement
+      );
+    }
+
     function injectStyle() {
-      if (document.getElementById("via-missav-gesture-style")) return;
-      var style = document.createElement("style");
+      var style = document.getElementById("via-missav-gesture-style");
+      if (style) return;
+      style = document.createElement("style");
       style.id = "via-missav-gesture-style";
       style.textContent =
         ".plyr__control--overlaid{display:none!important;}" +
+        ".plyr.via-ui-on .plyr__controls,.plyr.via-ui-on.plyr--hide-controls .plyr__controls{" +
+        "opacity:1!important;visibility:visible!important;pointer-events:auto!important;" +
+        "transform:none!important;display:flex!important;}" +
         ".plyr:not(.via-ui-on) .plyr__controls{opacity:0!important;pointer-events:none!important;}" +
-        "#via-missav-overlay{position:absolute;inset:0;z-index:8;pointer-events:none;overflow:hidden;}" +
-        "#via-missav-overlay .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
-        "#via-missav-overlay .via-side.left{left:0;}" +
-        "#via-missav-overlay .via-side.right{right:0;}" +
-        "#via-missav-overlay .via-side.on{animation:via-seek-fade .75s ease forwards;}" +
-        "#via-missav-overlay .via-ripple{position:absolute;width:210%;height:0;padding-bottom:210%;border-radius:50%;background:rgba(255,255,255,.16);top:50%;}" +
-        "#via-missav-overlay .via-side.left .via-ripple{right:8%;transform:translate(40%,-50%);}" +
-        "#via-missav-overlay .via-side.right .via-ripple{left:8%;transform:translate(-40%,-50%);}" +
-        "#via-missav-overlay .via-face{position:relative;z-index:1;color:#fff;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.45);}" +
-        "#via-missav-overlay .via-face b{display:block;font-size:13px;font-weight:600;}" +
-        "#via-missav-overlay .via-chevrons{display:flex;justify-content:center;align-items:center;height:28px;}" +
-        "#via-missav-overlay .via-side.on .via-chev{animation:via-chevron .55s ease;}" +
-        "#via-missav-overlay .via-side.on .via-chev:nth-child(2){animation-delay:.06s;}" +
-        "#via-missav-overlay .via-side.on .via-chev:nth-child(3){animation-delay:.12s;}" +
-        "#via-missav-play{pointer-events:auto;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:68px;border:0;border-radius:100%;background:rgba(0,0,0,.55);color:#fff;display:none;align-items:center;justify-content:center;z-index:9;padding:0;}" +
-        "#via-missav-play.show{display:flex;}" +
+        "#via-missav-layer{position:fixed;z-index:2147483646;pointer-events:none;overflow:hidden;}" +
+        "#via-missav-layer .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
+        "#via-missav-layer .via-side.left{left:0;}" +
+        "#via-missav-layer .via-side.right{right:0;}" +
+        "#via-missav-layer .via-side.on{opacity:1;animation:via-seek-fade .8s ease forwards;}" +
+        "#via-missav-layer .via-ripple{position:absolute;width:210%;height:0;padding-bottom:210%;border-radius:50%;background:rgba(255,255,255,.22);top:50%;}" +
+        "#via-missav-layer .via-side.left .via-ripple{right:8%;transform:translate(40%,-50%);}" +
+        "#via-missav-layer .via-side.right .via-ripple{left:8%;transform:translate(-40%,-50%);}" +
+        "#via-missav-layer .via-face{position:relative;z-index:1;color:#fff;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.55);}" +
+        "#via-missav-layer .via-face b{display:block;font-size:14px;font-weight:600;}" +
+        "#via-missav-layer .via-chevrons{display:flex;justify-content:center;align-items:center;height:32px;}" +
+        "#via-missav-layer .via-side.on .via-chev{animation:via-chevron .55s ease;}" +
+        "#via-missav-layer .via-side.on .via-chev:nth-child(2){animation-delay:.06s;}" +
+        "#via-missav-layer .via-side.on .via-chev:nth-child(3){animation-delay:.12s;}" +
+        "#via-missav-play{pointer-events:auto;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border:0;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;z-index:3;padding:0;}" +
+        "#via-missav-play.show,#via-missav-play.flash{display:flex!important;}" +
         "#via-missav-play.pulse{animation:via-play-pulse .4s ease;}" +
-        "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:48px;z-index:12;display:none;justify-content:space-between;align-items:center;padding:0 6px 4px;pointer-events:auto;color:#fff;}" +
-        ".plyr.via-ui-on #via-missav-seekbar,.plyr.via-ui-on #via-missav-play.show{display:flex;}" +
+        "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:56px;z-index:4;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
+        "#via-missav-layer.via-ui-on #via-missav-seekbar{display:flex!important;}" +
         "#via-missav-seekbar .via-seek-group{display:flex;align-items:center;gap:2px;}" +
         "#via-missav-seekbar button{appearance:none;-webkit-appearance:none;background:transparent;border:0;color:inherit;padding:6px 8px;margin:0;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:40px;line-height:1;}" +
         "#via-missav-seekbar button:hover,#via-missav-seekbar button:focus{background:rgba(255,255,255,.12);}" +
         "#via-missav-seekbar button svg{display:block;}" +
         "#via-missav-seekbar button span{font-size:11px;margin-top:1px;opacity:.92;font-family:inherit;}" +
         "[data-via-missav-site-seek='1'],[data-via-missav-controls='1']{display:none!important;}" +
-        "@keyframes via-seek-fade{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}" +
+        "@keyframes via-seek-fade{0%{opacity:0}10%{opacity:1}65%{opacity:1}100%{opacity:0}}" +
         "@keyframes via-chevron{0%{opacity:0;transform:scale(.7)}35%{opacity:1;transform:scale(1)}100%{opacity:.35;transform:scale(1)}}" +
         "@keyframes via-play-pulse{0%{transform:translate(-50%,-50%) scale(.82);opacity:.55}60%{transform:translate(-50%,-50%) scale(1.06);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}";
       (document.head || document.documentElement).appendChild(style);
@@ -611,6 +624,17 @@
       );
     }
 
+    function layoutLayer() {
+      var layer = document.getElementById("via-missav-layer");
+      var rect;
+      if (!layer) return;
+      rect = boxRect();
+      layer.style.left = Math.round(rect.left) + "px";
+      layer.style.top = Math.round(rect.top) + "px";
+      layer.style.width = Math.max(1, Math.round(rect.width)) + "px";
+      layer.style.height = Math.max(1, Math.round(rect.height)) + "px";
+    }
+
     function ensureSeekBar(host) {
       var bar = document.getElementById("via-missav-seekbar");
       var groups;
@@ -654,17 +678,14 @@
     }
 
     function ensureOverlay() {
-      var host = playerRoot();
+      var host = overlayHost();
       var wrap;
       var playBtn;
       if (!host) return null;
-      if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
-        host.style.position = "relative";
-      }
-      wrap = document.getElementById("via-missav-overlay");
+      wrap = document.getElementById("via-missav-layer");
       if (!wrap) {
         wrap = document.createElement("div");
-        wrap.id = "via-missav-overlay";
+        wrap.id = "via-missav-layer";
         wrap.setAttribute("data-via-missav-keep", "1");
         wrap.innerHTML =
           '<div class="via-side left"><i class="via-ripple"></i><div class="via-face"></div></div>' +
@@ -676,14 +697,15 @@
           if (isPaused()) playNow();
           else pauseNow();
           window.setTimeout(function () {
-            syncPlayIcon(true);
+            flashPlay();
             setUi(true);
           }, 0);
         });
       } else if (wrap.parentElement !== host) {
         host.appendChild(wrap);
       }
-      ensureSeekBar(host);
+      ensureSeekBar(wrap);
+      layoutLayer();
       return wrap;
     }
 
@@ -706,6 +728,18 @@
       else btn.classList.remove("show");
     }
 
+    function flashPlay() {
+      var btn = document.getElementById("via-missav-play");
+      if (!btn) return;
+      syncPlayIcon(true);
+      btn.classList.add("show", "flash");
+      if (flashPlay.timer) window.clearTimeout(flashPlay.timer);
+      flashPlay.timer = window.setTimeout(function () {
+        btn.classList.remove("flash");
+        if (!(uiShown || isPaused() || !userPlayed)) btn.classList.remove("show");
+      }, 850);
+    }
+
     function scheduleHide() {
       if (hideTimer) window.clearTimeout(hideTimer);
       hideTimer = 0;
@@ -717,12 +751,22 @@
 
     function setUi(shown) {
       var root = playerRoot();
+      var layer = ensureOverlay();
       uiShown = !!shown;
-      ensureOverlay();
-      if (root && root.classList) {
-        if (uiShown) root.classList.add("via-ui-on");
-        else root.classList.remove("via-ui-on");
+      if (layer) {
+        if (uiShown) layer.classList.add("via-ui-on");
+        else layer.classList.remove("via-ui-on");
       }
+      if (root && root.classList) {
+        if (uiShown) {
+          root.classList.add("via-ui-on");
+          root.classList.remove("plyr--hide-controls");
+        } else {
+          root.classList.remove("via-ui-on");
+          root.classList.add("plyr--hide-controls");
+        }
+      }
+      layoutLayer();
       syncPlayIcon(false);
       showPlayBtn(uiShown || isPaused() || !userPlayed);
       if (uiShown) scheduleHide();
@@ -735,6 +779,7 @@
       var amount;
       var sides;
       var s;
+      layoutLayer();
       if (!wrap) return;
       if (seekSide !== side) seekStreak = 0;
       seekSide = side;
@@ -823,7 +868,7 @@
       }
       togglePlay();
       window.setTimeout(function () {
-        syncPlayIcon(true);
+        flashPlay();
         setUi(true);
       }, 0);
     }
@@ -901,20 +946,31 @@
     document.addEventListener("dblclick", onDblClick, true);
     disablePlyr();
     primePaused();
+    window.addEventListener("resize", layoutLayer);
+    window.addEventListener("orientationchange", layoutLayer);
+    document.addEventListener("fullscreenchange", function () {
+      ensureOverlay();
+      layoutLayer();
+    });
+    document.addEventListener("webkitfullscreenchange", function () {
+      ensureOverlay();
+      layoutLayer();
+    });
     window.setInterval(function () {
       disablePlyr();
       hookVideo();
       ensureOverlay();
+      layoutLayer();
       if (!userPlayed) primePaused();
     }, 800);
   }
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "1") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "2") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "1");
+      document.documentElement.setAttribute("data-via-missav-gesture", "2");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
@@ -1033,7 +1089,17 @@
 
   function isProtected(el) {
     if (!el || el === document.body || el === document.documentElement) return true;
-    if (el.id === BTN_ID || el.id === "player" || el.id === "video") return true;
+    if (
+      el.id === BTN_ID ||
+      el.id === "player" ||
+      el.id === "video" ||
+      el.id === "via-missav-layer" ||
+      el.id === "via-missav-overlay" ||
+      el.id === "via-missav-play" ||
+      el.id === "via-missav-seekbar"
+    ) {
+      return true;
+    }
     if (el.getAttribute(BTN_ATTR) === "1") return true;
     if (el.getAttribute("data-demo-player") === "1") return true;
     if (el.getAttribute("data-via-missav-keep") === "1") return true;
@@ -1197,6 +1263,7 @@
         el.id === "via-missav-toast" ||
         el.id === "via-missav-seek-hint" ||
         el.id === "via-missav-overlay" ||
+        el.id === "via-missav-layer" ||
         el.id === "via-missav-play" ||
         el.id === "via-missav-seekbar" ||
         el.getAttribute(CTRL_ATTR) === "1" ||
