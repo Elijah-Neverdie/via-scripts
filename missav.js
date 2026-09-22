@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.8
+// @version      1.4.9
 // @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -2480,6 +2480,22 @@
     }
   }
 
+  function inRecommendCard(el) {
+    var node = el;
+    var hops = 0;
+    var cls;
+    if (!el) return false;
+    if ((el.id || "").indexOf("preview-") === 0) return true;
+    while (node && node.nodeType === 1 && hops < 8) {
+      if (node === document.body || node === document.documentElement) return false;
+      cls = node.className && node.className.toString ? node.className.toString() : "";
+      if (/thumbnail|preview/.test(cls) && !/\bplyr\b|\bplayer\b/.test(cls)) return true;
+      node = node.parentElement;
+      hops += 1;
+    }
+    return false;
+  }
+
   function isFloatingAd(el) {
     var style;
     var rect;
@@ -2489,7 +2505,7 @@
     var compact;
     var hasMedia;
     if (!el || el.nodeType !== 1 || isProtected(el) || isOurUi(el) || holdsMainPlayer(el)) return false;
-    if (looksLikeVideoCard(el) || looksLikeContent(el)) return false;
+    if (inRecommendCard(el) || looksLikeVideoCard(el) || looksLikeContent(el)) return false;
     if (containsProtected(el)) return false;
     if (el.id === "b-a-b" || el.hasAttribute("data-ts-spot")) return true;
     if (el.tagName === "IFRAME" && looksLikeAdMarkup(el)) return true;
@@ -2633,8 +2649,9 @@
         stack = [];
       }
       for (i = 0; i < stack.length; i++) {
+        if (inRecommendCard(stack[i])) continue;
         host = floatingHost(stack[i]);
-        if (host && isFloatingAd(host)) hideFloatingAdTree(host);
+        if (host && !inRecommendCard(host) && isFloatingAd(host)) hideFloatingAdTree(host);
       }
     }
   }
@@ -2648,15 +2665,19 @@
     var host;
     var hops;
     var rect;
+    var style;
     for (i = 0; i < videos.length; i++) {
       el = videos[i];
-      if (holdsMainPlayer(el)) continue;
+      if (holdsMainPlayer(el) || inRecommendCard(el)) continue;
       host = el;
       hops = 0;
       while (host && host !== document.body && hops < 7) {
+        if (inRecommendCard(host) || looksLikeVideoCard(host) || holdsMainPlayer(host)) break;
+        style = window.getComputedStyle ? window.getComputedStyle(host) : null;
         rect = host.getBoundingClientRect();
         if (
-          !holdsMainPlayer(host) &&
+          style &&
+          (style.position === "fixed" || style.position === "sticky") &&
           rect.width >= 72 &&
           rect.width <= Math.min(520, window.innerWidth * 0.62) &&
           rect.height >= 72 &&
