@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.0
+// @version      1.4.1
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 7) return;
-    window.__viaMissavGestureHook = 7;
+    if (window.__viaMissavGestureHook === 8) return;
+    window.__viaMissavGestureHook = 8;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -573,7 +573,8 @@
         ".plyr.via-ui-on.plyr--hide-controls .plyr__controls[hidden]{" +
         "display:flex!important;opacity:1!important;visibility:visible!important;" +
         "pointer-events:auto!important;transform:none!important;translate:none!important;}" +
-        "#via-missav-hud{position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden;transform:translateZ(0);}" +
+        "#via-missav-hud{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483000;pointer-events:none;overflow:hidden;display:none;}" +
+        "#via-missav-hud.via-hud-on{display:block;}" +
         "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:33.333%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
         "#via-missav-hud .via-side.left{left:0;}" +
         "#via-missav-hud .via-side.right{left:66.667%;}" +
@@ -689,27 +690,45 @@
       }
     }
 
+    function pinHud(wrap) {
+      var rect = boxRect();
+      if (!wrap) return;
+      wrap.style.left = (rect.left || 0) + "px";
+      wrap.style.top = (rect.top || 0) + "px";
+      wrap.style.width = (rect.width || 0) + "px";
+      wrap.style.height = (rect.height || 0) + "px";
+      wrap.classList.add("via-hud-on");
+    }
+
+    function hideHud() {
+      var wrap = document.getElementById("via-missav-hud");
+      if (!wrap) return;
+      wrap.classList.remove("via-hud-on");
+      wrap.style.width = "0";
+      wrap.style.height = "0";
+    }
+
     function ensureOverlay() {
       var host;
-      var root;
       var wrap;
       var flash;
+      var mount;
       removeLegacyLayer();
-      if (!isWatchPage()) return null;
-      host = plyrEl() || playerRoot();
-      root = host;
-      if (!host) return null;
-      if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
-        host.style.position = "relative";
-      }
       wrap = document.getElementById("via-missav-hud");
+      if (!isWatchPage()) {
+        if (wrap) hideHud();
+        return null;
+      }
+      host = plyrEl() || playerRoot();
+      mount = document.body || document.documentElement;
+      if (!mount) return null;
       if (!wrap) {
         wrap = document.createElement("div");
         wrap.id = "via-missav-hud";
         wrap.setAttribute("data-via-missav-keep", "1");
-        host.appendChild(wrap);
-      } else if (wrap.parentElement !== host) {
-        host.appendChild(wrap);
+        mount.appendChild(wrap);
+      } else if (wrap.parentElement !== mount) {
+        mount.appendChild(wrap);
       }
       if (!wrap.querySelector(".via-side.left .via-face") || wrap.querySelector(".via-ripple")) {
         wrap.innerHTML =
@@ -719,7 +738,7 @@
       }
       flash = wrap.querySelector(".via-flash");
       if (flash && !flash.innerHTML) flash.innerHTML = playSvg();
-      ensureSeekBar(root);
+      if (host) ensureSeekBar(host);
       return wrap;
     }
 
@@ -727,6 +746,7 @@
       var wrap = ensureOverlay();
       var flash = wrap && wrap.querySelector(".via-flash");
       if (!flash) return;
+      pinHud(wrap);
       flash.innerHTML = isPaused() ? playSvg() : pauseSvg();
       flash.classList.remove("on");
       void flash.offsetWidth;
@@ -734,6 +754,7 @@
       if (flashPlay.timer) window.clearTimeout(flashPlay.timer);
       flashPlay.timer = window.setTimeout(function () {
         flash.classList.remove("on");
+        hideHud();
       }, 850);
     }
 
@@ -848,6 +869,7 @@
       var sides;
       var s;
       if (!wrap) return;
+      pinHud(wrap);
       if (seekSide !== side) seekStreak = 0;
       seekSide = side;
       seekStreak += 1;
@@ -873,7 +895,8 @@
           sides[s].classList.remove("on");
           sides[s].style.removeProperty("opacity");
         }
-      }, 750);
+        hideHud();
+      }, 900);
       if (seekTimer) window.clearTimeout(seekTimer);
       seekTimer = window.setTimeout(function () {
         seekStreak = 0;
@@ -1004,10 +1027,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "7") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "8") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "7");
+      document.documentElement.setAttribute("data-via-missav-gesture", "8");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
@@ -1100,8 +1123,6 @@
       '#b-a-b,' +
       'div[class*="fixed"][class*="bottom-"][class*="right-"],' +
       'div[class*="fixed"][class*="right-"][class*="bottom-"],' +
-      '[class*="lg:flex"][style*="min-width: 300px"],' +
-      '[class*="lg:flex"][style*="max-width: 300px"],' +
       'div[style*="width: 300px; height: 250px"],' +
       'div[style*="width: 300px; height: 100px"],' +
       'a[href*="//bit.ly/"],' +
@@ -1116,15 +1137,12 @@
       'iframe[src*="googlesyndication"],' +
       'body > iframe[style*="position:fixed"],' +
       'body > iframe[style*="position: fixed"],' +
-      'html > iframe,' +
       'iframe[src*="smartpop"],' +
       'iframe[src*="stripcash"],' +
       'iframe[src*="inpage"],' +
       'iframe[src*="liveef"],' +
       'iframe[src*="live-ef"],' +
       '[id*="tsyndicate"],' +
-      '[id*="ts-"],' +
-      '[id*="ts_"],' +
       '[id*="liveef"],' +
       '[class*="liveef"],' +
       '[class*="LIVEEF"],' +
@@ -1136,6 +1154,43 @@
       'body > div:has(iframe[src*="exoclick"]),' +
       'body > div:has(iframe[src*="juicyads"]),' +
       '[data-via-missav-ad="1"]{display:none!important;pointer-events:none!important;height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}';
+  }
+
+  function isWatchPath() {
+    return /\/[a-z]{2,14}-\d{2,6}/i.test(location.pathname || "");
+  }
+
+  function looksLikeVideoCard(el) {
+    var text;
+    if (!el || !el.querySelector) return false;
+    if (el.id === "player" || (el.closest && el.closest("#player, .plyr"))) return false;
+    if (el.querySelector("#player, .plyr__controls, video.player")) return false;
+    if (el.querySelector("img") && el.querySelector("a[href]")) return true;
+    text = compactText(el);
+    if (/[A-Z0-9]{2,12}-\d{2,6}/i.test(text) && el.querySelector("img, a")) return true;
+    if (el.querySelectorAll("a[href]").length >= 4 && el.querySelector("img")) return true;
+    return false;
+  }
+
+  function restoreMistakenContent() {
+    var nodes = document.querySelectorAll("[data-via-missav-ad='1']");
+    var i;
+    var el;
+    for (i = 0; i < nodes.length; i++) {
+      el = nodes[i];
+      if (looksLikeAdMarkup(el)) continue;
+      if (!looksLikeVideoCard(el) && !looksLikeContent(el)) continue;
+      el.removeAttribute("data-via-missav-ad");
+      el.hidden = false;
+      el.style.removeProperty("display");
+      el.style.removeProperty("visibility");
+      el.style.removeProperty("pointer-events");
+      el.style.removeProperty("opacity");
+      el.style.removeProperty("height");
+      el.style.removeProperty("overflow");
+      el.style.removeProperty("margin");
+      el.style.removeProperty("padding");
+    }
   }
 
   function isMainPlayer(el) {
@@ -1307,15 +1362,21 @@
   }
 
   function hideDesktopSidebar() {
-    var nodes = document.querySelectorAll(
+    var nodes;
+    var i;
+    var el;
+    if (!isWatchPath()) return;
+    nodes = document.querySelectorAll(
       '[class*="lg:flex"][style*="min-width: 300px"], [class*="lg:flex"][style*="max-width: 300px"]'
     );
-    var i;
     for (i = 0; i < nodes.length; i++) {
-      if (nodes[i].querySelector && nodes[i].querySelector("video, h1, [" + CTRL_ATTR + "]")) {
+      el = nodes[i];
+      if (looksLikeVideoCard(el) || looksLikeContent(el)) continue;
+      if (el.querySelector && el.querySelector("video, h1, [" + CTRL_ATTR + "], #player, .plyr")) {
         continue;
       }
-      hideNode(nodes[i]);
+      if (!looksLikeAd(el) && !looksLikeAdMarkup(el)) continue;
+      hideNode(el);
     }
   }
 
@@ -1379,6 +1440,7 @@
     var compact;
     var hasMedia;
     if (!el || el.nodeType !== 1 || isProtected(el) || isOurUi(el)) return false;
+    if (looksLikeVideoCard(el) || looksLikeContent(el)) return false;
     if (containsProtected(el)) return false;
     if (el.id === "b-a-b" || el.hasAttribute("data-ts-spot")) return true;
     if (el.tagName === "IFRAME" && looksLikeAdMarkup(el)) return true;
@@ -1503,7 +1565,7 @@
     var stack;
     var i;
     var host;
-    if (!document.elementsFromPoint) return;
+    if (!isWatchPath() || !document.elementsFromPoint) return;
     points = [
       [window.innerWidth - 16, window.innerHeight - 16],
       [window.innerWidth - 48, window.innerHeight - 48],
@@ -1529,7 +1591,9 @@
   }
 
   function hideCornerVideos() {
-    var videos = document.querySelectorAll("video, iframe");
+    var videos;
+    if (!isWatchPath()) return;
+    videos = document.querySelectorAll("video, iframe");
     var i;
     var el;
     var host;
@@ -1587,7 +1651,11 @@
       attributes: true,
       attributeFilter: ["style", "class", "id", "src", "hidden"]
     });
-    window.setInterval(sweepFloatingAds, 1000);
+    window.setInterval(function () {
+      restoreMistakenContent();
+      sweepFloatingAds();
+    }, 1000);
+    restoreMistakenContent();
     sweepFloatingAds();
   }
 
@@ -1639,6 +1707,7 @@
         }
       }
     }
+    restoreMistakenContent();
     hideDesktopSidebar();
     sweepFloatingAds();
     hideAdsBelowToolbar();
@@ -1957,11 +2026,12 @@
   }
 
   function startDomWork() {
+    injectAdCss();
     insertCopyButton();
+    restoreMistakenContent();
     hideKnownAds();
     disablePopHandlers();
     keepLandscapeControls();
-    injectAdCss();
     injectPageGestureHook();
     startFloatingAdWatch();
 
