@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.8
+// @version      1.3.9
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 5) return;
-    window.__viaMissavGestureHook = 5;
+    if (window.__viaMissavGestureHook === 6) return;
+    window.__viaMissavGestureHook = 6;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -574,19 +574,11 @@
         "display:flex!important;opacity:1!important;visibility:visible!important;" +
         "pointer-events:auto!important;transform:none!important;translate:none!important;}" +
         "#via-missav-hud{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:hidden;}" +
-        "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
+        "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:33.333%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
         "#via-missav-hud .via-side.left{left:0;}" +
-        "#via-missav-hud .via-side.right{right:0;}" +
+        "#via-missav-hud .via-side.right{left:66.667%;}" +
         "#via-missav-hud .via-side.on{opacity:1;animation:via-seek-fade .8s ease forwards;}" +
-        "#via-missav-hud .via-ripple{position:absolute;width:210%;height:0;padding-bottom:210%;border-radius:50%;background:rgba(255,255,255,.22);top:50%;}" +
-        "#via-missav-hud .via-side.left .via-ripple{right:8%;transform:translate(40%,-50%);}" +
-        "#via-missav-hud .via-side.right .via-ripple{left:8%;transform:translate(-40%,-50%);}" +
-        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.55);}" +
-        "#via-missav-hud .via-face b{display:block;font-size:14px;font-weight:600;}" +
-        "#via-missav-hud .via-chevrons{display:flex;justify-content:center;align-items:center;height:32px;}" +
-        "#via-missav-hud .via-side.on .via-chev{animation:via-chevron .55s ease;}" +
-        "#via-missav-hud .via-side.on .via-chev:nth-child(2){animation-delay:.06s;}" +
-        "#via-missav-hud .via-side.on .via-chev:nth-child(3){animation-delay:.12s;}" +
+        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;font-size:32px;font-weight:700;letter-spacing:.04em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.7);}" +
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
         "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
@@ -597,7 +589,6 @@
         "#via-missav-seekbar button span{font-size:11px;margin-top:1px;opacity:.92;}" +
         "[data-via-missav-site-seek='1'],[data-via-missav-controls='1']{display:none!important;}" +
         "@keyframes via-seek-fade{0%{opacity:0}10%{opacity:1}65%{opacity:1}100%{opacity:0}}" +
-        "@keyframes via-chevron{0%{opacity:0;transform:scale(.7)}35%{opacity:1;transform:scale(1)}100%{opacity:.35;transform:scale(1)}}" +
         "@keyframes via-play-pulse{0%{transform:translate(-50%,-50%) scale(.82);opacity:.55}60%{transform:translate(-50%,-50%) scale(1.06);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}";
     }
 
@@ -715,13 +706,15 @@
         wrap = document.createElement("div");
         wrap.id = "via-missav-hud";
         wrap.setAttribute("data-via-missav-keep", "1");
-        wrap.innerHTML =
-          '<div class="via-side left"><i class="via-ripple"></i><div class="via-face"></div></div>' +
-          '<div class="via-side right"><i class="via-ripple"></i><div class="via-face"></div></div>' +
-          '<div class="via-flash" aria-hidden="true"></div>';
         host.appendChild(wrap);
       } else if (wrap.parentElement !== host) {
         host.appendChild(wrap);
+      }
+      if (!wrap.querySelector(".via-side.left .via-face") || wrap.querySelector(".via-ripple")) {
+        wrap.innerHTML =
+          '<div class="via-side left"><div class="via-face"></div></div>' +
+          '<div class="via-side right"><div class="via-face"></div></div>' +
+          '<div class="via-flash" aria-hidden="true"></div>';
       }
       flash = wrap.querySelector(".via-flash");
       if (flash && !flash.innerHTML) flash.innerHTML = playSvg();
@@ -860,10 +853,7 @@
       amount = SEEK * seekStreak;
       panel = wrap.querySelector(".via-side." + side);
       face = panel && panel.querySelector(".via-face");
-      if (face) {
-        face.innerHTML =
-          chevrons(side) + "<b>" + (side === "left" ? "−" : "+") + amount + " 秒</b>";
-      }
+      if (face) face.textContent = (side === "left" ? "-" : "+") + amount + "s";
       sides = wrap.querySelectorAll(".via-side");
       for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
       if (panel) {
@@ -1005,10 +995,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "5") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "6") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "5");
+      document.documentElement.setAttribute("data-via-missav-gesture", "6");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
