@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.11
+// @version      1.4.12
 // @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 15) return;
-    window.__viaMissavGestureHook = 15;
+    if (window.__viaMissavGestureHook === 16) return;
+    window.__viaMissavGestureHook = 16;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -838,14 +838,94 @@
       }
     }
 
+    function labelRect() {
+      var v = videoEl();
+      var nodes = [];
+      var i;
+      var node;
+      var raw;
+      var ratio;
+      var height;
+      if (v) {
+        nodes.push(v);
+        if (v.closest) nodes.push(v.closest(".plyr__video-wrapper"));
+      }
+      nodes.push(document.querySelector(".plyr__video-wrapper"));
+      for (i = 0; i < nodes.length; i++) {
+        node = nodes[i];
+        if (!node || !node.getBoundingClientRect) continue;
+        raw = asCssBox(node.getBoundingClientRect());
+        if (!raw || raw.width < 80 || raw.height < 40) continue;
+        ratio = raw.height / raw.width;
+        if (ratio >= 0.42 && ratio <= 0.78) return raw;
+      }
+      if (v && v.getBoundingClientRect) {
+        raw = asCssBox(v.getBoundingClientRect());
+        if (raw && raw.width >= 80) {
+          height = raw.height;
+          if (height > raw.width * 0.8 || height < raw.width * 0.4) height = (raw.width * 9) / 16;
+          return {
+            left: raw.left,
+            top: raw.top,
+            width: raw.width,
+            height: height,
+            right: raw.left + raw.width,
+            bottom: raw.top + height
+          };
+        }
+      }
+      return null;
+    }
+
+    function hudMount() {
+      var fs = document.fullscreenElement || document.webkitFullscreenElement;
+      var active;
+      if (fs && fs.nodeType === 1 && fs.tagName !== "VIDEO") return fs;
+      active = document.querySelector(".plyr--fullscreen-active");
+      if (active) return active;
+      return document.body || document.documentElement;
+    }
+
+    function fixedOrigin(wrap) {
+      var node = wrap.parentElement;
+      var cs;
+      var will;
+      while (node && node !== document.documentElement) {
+        cs = window.getComputedStyle ? window.getComputedStyle(node) : null;
+        will = cs && cs.willChange ? cs.willChange : "";
+        if (
+          cs &&
+          ((cs.transform && cs.transform !== "none") ||
+            (cs.filter && cs.filter !== "none") ||
+            will.indexOf("transform") !== -1)
+        ) {
+          return node.getBoundingClientRect();
+        }
+        node = node.parentElement;
+      }
+      return { left: 0, top: 0 };
+    }
+
     function pinHud(wrap) {
-      var rect = boxRect();
+      var picture = labelRect();
+      var rect = picture || boxRect();
       var fs = fsNode();
       var scale;
       var faces;
       var i;
       var px;
+      var origin;
       if (!wrap) return;
+      if (!picture && rect.height > rect.width * 0.8) {
+        rect = {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.width * 9 / 16,
+          right: rect.left + rect.width,
+          bottom: rect.top + rect.width * 9 / 16
+        };
+      }
       if (!fs) {
         if (rect.width * rect.height >= 8000) inlineArea = rect.width * rect.height;
       }
@@ -861,8 +941,9 @@
         faces[i].style.fontSize = px + "px";
         faces[i].style.fontWeight = "400";
       }
-      wrap.style.left = (rect.left || 0) + "px";
-      wrap.style.top = (rect.top || 0) + "px";
+      origin = fixedOrigin(wrap);
+      wrap.style.left = (rect.left - origin.left) + "px";
+      wrap.style.top = (rect.top - origin.top) + "px";
       wrap.style.width = (rect.width || 0) + "px";
       wrap.style.height = (rect.height || 0) + "px";
       wrap.style.zIndex = "2147483646";
@@ -902,7 +983,7 @@
         return null;
       }
       host = plyrEl() || playerRoot();
-      mount = fsNode() || document.body || document.documentElement;
+      mount = hudMount();
       if (!mount) return null;
       if (!wrap) {
         wrap = document.createElement("div");
@@ -2107,10 +2188,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "15") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "16") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "15");
+      document.documentElement.setAttribute("data-via-missav-gesture", "16");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
@@ -2650,14 +2731,17 @@
     var nearBottom;
     var compact;
     var hasMedia;
+    var fixed;
     if (!el || el.nodeType !== 1 || isProtected(el) || isOurUi(el) || holdsMainPlayer(el)) return false;
-    if (inRecommendCard(el) || looksLikeVideoCard(el) || looksLikeContent(el)) return false;
     if (containsProtected(el)) return false;
     if (el.id === "b-a-b" || el.hasAttribute("data-ts-spot")) return true;
     if (el.tagName === "IFRAME" && looksLikeAdMarkup(el)) return true;
     if (!window.getComputedStyle) return looksLikeAdMarkup(el);
     style = window.getComputedStyle(el);
     if (!style) return false;
+    fixed = style.position === "fixed" || style.position === "sticky";
+    if (!fixed && (inRecommendCard(el) || looksLikeVideoCard(el) || looksLikeContent(el))) return false;
+    if (fixed && inRecommendCard(el)) return false;
     if (style.position !== "fixed" && style.position !== "sticky" && style.position !== "absolute") {
       return looksLikeAdMarkup(el) && (el.tagName === "IFRAME" || el.tagName === "VIDEO");
     }
@@ -2680,6 +2764,17 @@
     if (el.tagName === "IFRAME" && nearRight && nearBottom) return true;
     if (el.tagName === "VIDEO" && !isMainPlayer(el) && nearRight && nearBottom) return true;
     if (compact && nearRight && nearBottom && (hasMedia || el.tagName === "IFRAME" || el.tagName === "VIDEO")) {
+      return true;
+    }
+    if (
+      fixed &&
+      nearRight &&
+      nearBottom &&
+      rect.width <= view.width * 0.72 &&
+      rect.height <= view.height * 0.5 &&
+      rect.width >= 48 &&
+      rect.height >= 48
+    ) {
       return true;
     }
     return false;
@@ -2845,6 +2940,42 @@
     }
   }
 
+  function hideBodyCornerAds() {
+    var view;
+    var nodes;
+    var extra;
+    var i;
+    var node;
+    var style;
+    var rect;
+    if (!document.body || !window.getComputedStyle) return;
+    view = screenView();
+    nodes = [];
+    for (node = document.body.firstElementChild; node; node = node.nextElementSibling) nodes.push(node);
+    try {
+      extra = document.querySelectorAll("iframe, video");
+    } catch (e) {
+      extra = [];
+    }
+    for (i = 0; i < extra.length; i++) nodes.push(extra[i]);
+    for (i = 0; i < nodes.length; i++) {
+      node = nodes[i];
+      if (!node || node.nodeType !== 1) continue;
+      if (holdsMainPlayer(node) || isOurUi(node) || inRecommendCard(node)) continue;
+      if (node.tagName === "VIDEO" && isMainPlayer(node)) continue;
+      if (node.closest && node.closest("#player, .plyr, .plyr__video-wrapper, #via-missav-hud")) continue;
+      style = window.getComputedStyle(node);
+      if (!style || (style.position !== "fixed" && style.position !== "sticky")) continue;
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      rect = cssScreenBox(node.getBoundingClientRect());
+      if (!rect || rect.width < 48 || rect.height < 48) continue;
+      if (rect.width > view.width * 0.82 || rect.height > view.height * 0.55) continue;
+      if (rect.right < view.right - Math.min(200, view.width * 0.3)) continue;
+      if (rect.bottom < view.bottom - Math.min(240, view.height * 0.3)) continue;
+      hideNode(node);
+    }
+  }
+
   function sweepFloatingAds() {
     var nodes = collectFloatCandidates();
     var i;
@@ -2853,6 +2984,7 @@
     }
     hideCornerVideos();
     sweepCornerHits();
+    hideBodyCornerAds();
   }
 
   function scheduleAdSweep() {
