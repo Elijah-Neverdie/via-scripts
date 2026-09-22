@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.9
+// @version      1.4.10
 // @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 13) return;
-    window.__viaMissavGestureHook = 13;
+    if (window.__viaMissavGestureHook === 14) return;
+    window.__viaMissavGestureHook = 14;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -466,33 +466,73 @@
       return null;
     }
 
+    function clipRect(rect) {
+      var left;
+      var top;
+      var right;
+      var bottom;
+      var width;
+      var height;
+      if (!rect) return null;
+      left = Math.max(rect.left, 0);
+      top = Math.max(rect.top, 0);
+      right = Math.min(rect.right, window.innerWidth || rect.right);
+      bottom = Math.min(rect.bottom, window.innerHeight || rect.bottom);
+      width = right - left;
+      height = bottom - top;
+      if (width < 120 || height < 80) return null;
+      return { left: left, top: top, right: right, bottom: bottom, width: width, height: height };
+    }
+
+    function pictureRect(el) {
+      var node = el;
+      var hops = 0;
+      var best = null;
+      var bestArea = 0;
+      var rect;
+      var ratio;
+      var area;
+      while (node && node !== document.body && hops < 8) {
+        if (node.getBoundingClientRect) {
+          rect = clipRect(node.getBoundingClientRect());
+          if (rect) {
+            ratio = rect.height / rect.width;
+            if (ratio > 0.35 && ratio < 0.9) {
+              area = rect.width * rect.height;
+              if (area > bestArea) {
+                best = rect;
+                bestArea = area;
+              }
+            }
+          }
+        }
+        node = node.parentElement;
+        hops += 1;
+      }
+      return best;
+    }
+
     function boxRect() {
-      var list = [];
       var v = videoEl();
       var fs = fsNode();
-      var i;
-      var el;
       var rect;
-      if (fs) list.push(fs);
-      if (v) {
-        list.push(v);
-        if (v.closest) {
-          list.push(v.closest(".plyr__video-wrapper"));
-          list.push(v.closest(".plyr"));
-          list.push(v.closest("#player"));
+      if (fs && fs.getBoundingClientRect) {
+        rect = clipRect(fs.getBoundingClientRect());
+        if (
+          rect &&
+          rect.width >= (window.innerWidth || 1) * 0.7 &&
+          rect.height >= (window.innerHeight || 1) * 0.7
+        ) {
+          return rect;
         }
       }
-      list.push(document.querySelector(".plyr__video-wrapper"));
-      list.push(playerRoot());
-      for (i = 0; i < list.length; i++) {
-        el = list[i];
-        if (!el || !el.getBoundingClientRect) continue;
-        rect = el.getBoundingClientRect();
-        if (rect.width >= 120 && rect.height >= 80) return rect;
-      }
+      rect = pictureRect(v || playerRoot());
+      if (rect) return rect;
       return {
         left: 0,
         top: 0,
+        right: window.innerWidth || 1,
+        bottom: window.innerHeight || 1,
         width: window.innerWidth || 1,
         height: window.innerHeight || 1
       };
@@ -760,6 +800,7 @@
       wrap.style.width = (rect.width || 0) + "px";
       wrap.style.height = (rect.height || 0) + "px";
       wrap.style.zIndex = "2147483646";
+      wrap.style.transform = "translateZ(0)";
       wrap.classList.add("via-hud-on");
     }
 
@@ -2000,10 +2041,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "13") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "14") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "13");
+      document.documentElement.setAttribute("data-via-missav-gesture", "14");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
