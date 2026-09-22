@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.0
-// @description  分享旁复制按钮、屏蔽按钮下方广告，跳过首次播放弹出的广告页并直接播放，横屏和全屏保留完整快进快退按钮
+// @version      1.3.1
+// @description  分享旁复制按钮、屏蔽播放页广告，跳过首次播放弹窗，横屏仅保留快进快退条且不改页面布局
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -423,9 +423,18 @@
     style.textContent =
       '.relative>div[x-init*="campaignId=under_player"],' +
       'div[x-init*="campaignId=under_player"],' +
+      '[class*="under_player"],' +
       'div[x-init*="#genki-counter"],' +
       "div.ts-outstream-video," +
+      '[class*="ts-outstream"],' +
+      '[data-ts-spot],' +
+      '#b-a-b,' +
+      'div[class*="fixed"][class*="bottom-"][class*="right-"],' +
+      'div[class*="fixed"][class*="right-"][class*="bottom-"],' +
+      '[class*="lg:flex"][style*="min-width: 300px"],' +
+      '[class*="lg:flex"][style*="max-width: 300px"],' +
       'div[style*="width: 300px; height: 250px"],' +
+      'div[style*="width: 300px; height: 100px"],' +
       'a[href*="//bit.ly/"],' +
       'a[href*="go.myavlive.com"],' +
       'img[alt="MissAV takeover Fanza"],' +
@@ -585,11 +594,61 @@
     }
   }
 
+  function hideDesktopSidebar() {
+    var nodes = document.querySelectorAll(
+      '[class*="lg:flex"][style*="min-width: 300px"], [class*="lg:flex"][style*="max-width: 300px"]'
+    );
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      if (nodes[i].querySelector && nodes[i].querySelector("video, h1, [" + CTRL_ATTR + "]")) {
+        continue;
+      }
+      hideNode(nodes[i]);
+    }
+  }
+
+  function hideCornerWidgets() {
+    var nodes = document.querySelectorAll("body > div, body > iframe, body > aside");
+    var i;
+    var el;
+    var style;
+    var rect;
+    for (i = 0; i < nodes.length; i++) {
+      el = nodes[i];
+      if (isProtected(el) || el.id === BTN_ID) continue;
+      if (el.id === "b-a-b") {
+        hideNode(el);
+        continue;
+      }
+      style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (!style || (style.position !== "fixed" && style.position !== "sticky")) continue;
+      if (el.querySelector && el.querySelector("video, h1, #" + BTN_ID + ", [" + CTRL_ATTR + "]")) {
+        continue;
+      }
+      rect = el.getBoundingClientRect();
+      if (rect.width >= window.innerWidth * 0.9 && rect.height >= window.innerHeight * 0.5) {
+        continue;
+      }
+      if (
+        rect.width <= 420 &&
+        rect.height <= 420 &&
+        rect.right >= window.innerWidth - 96 &&
+        rect.bottom >= window.innerHeight - 96
+      ) {
+        hideNode(el);
+      }
+    }
+  }
+
   function hideKnownAds() {
     var selectors = [
       '.relative > div[x-init*="campaignId=under_player"]',
       'div[x-init*="campaignId=under_player"]',
+      '[class*="under_player"]',
       "div.ts-outstream-video",
+      '[class*="ts-outstream"]',
+      "[data-ts-spot]",
+      "#b-a-b",
       'div[x-init*="#genki-counter"]',
       'img[alt="MissAV takeover Fanza"]',
       "ul.mb-4.list-none.text-nord14",
@@ -600,7 +659,9 @@
       'iframe[src*="doubleclick"]',
       'a[href*="go.myavlive.com"]',
       'a[href*="myavlive.com"]',
-      'a[href*="//bit.ly/"]'
+      'a[href*="//bit.ly/"]',
+      'div[class*="fixed"][class*="bottom-"][class*="right-"]',
+      'div[class*="fixed"][class*="right-"][class*="bottom-"]'
     ];
     var i;
     var n;
@@ -614,12 +675,14 @@
       for (n = 0; n < nodes.length; n++) {
         var el = nodes[n];
         hideNode(el);
-        if (el.tagName === "A") {
+        if (el.tagName === "A" || el.tagName === "IFRAME" || el.hasAttribute("data-ts-spot")) {
           var parent = el.parentElement;
           if (parent && looksLikeAd(parent) && !isProtected(parent)) hideNode(parent);
         }
       }
     }
+    hideDesktopSidebar();
+    hideCornerWidgets();
     hideAdsBelowToolbar();
     stripPlayerOverlays();
   }
@@ -706,9 +769,6 @@
       "background:rgba(46,52,64,.96);color:#eceff4;border:1px solid #4c566a;" +
       "box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;max-width:90vw;}" +
       "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}" +
-      "@media (orientation:landscape){[" +
-      CTRL_ATTR +
-      "='1']{display:flex!important;visibility:visible!important;opacity:1!important;}}" +
       "[" +
       CTRL_ATTR +
       "='1'][data-via-missav-fs='1']{display:flex!important;visibility:visible!important;opacity:1!important;" +
@@ -820,29 +880,51 @@
     return /^[+\-]?\d+\s*(m|s)$/i.test(compactText(el));
   }
 
+  function seekButtonCount(el) {
+    var buttons;
+    var i;
+    var n;
+    if (!el || !el.querySelectorAll) return 0;
+    buttons = el.querySelectorAll("button");
+    n = 0;
+    for (i = 0; i < buttons.length; i++) {
+      if (isSeekButton(buttons[i])) n += 1;
+    }
+    return n;
+  }
+
+  function isSeekBar(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    if (el.querySelector && el.querySelector("video, h1, table")) return false;
+    if (seekButtonCount(el) < 4) return false;
+    if (el.offsetHeight && el.offsetHeight > 160) return false;
+    return classNames(el).some(isSmHiddenClass) || el.getAttribute(CTRL_ATTR) === "1";
+  }
+
   function findControlBar() {
-    var buttons = document.querySelectorAll("button");
-    var seekers = [];
+    var marked = document.querySelector("[" + CTRL_ATTR + "='1']");
+    var buttons;
     var i;
     var el;
-    var count;
-    var best;
+    var hops;
+    if (marked && isSeekBar(marked)) return marked;
+    if (marked && !isSeekBar(marked)) {
+      marked.removeAttribute(CTRL_ATTR);
+      marked.removeAttribute("data-via-missav-smhide");
+      marked.removeAttribute("data-via-missav-fs");
+    }
+    buttons = document.querySelectorAll("button");
     for (i = 0; i < buttons.length; i++) {
-      if (isSeekButton(buttons[i])) seekers.push(buttons[i]);
-    }
-    if (seekers.length < 4) return null;
-    el = seekers[0];
-    best = null;
-    while (el && el !== document.body) {
-      count = 0;
-      for (i = 0; i < seekers.length; i++) {
-        if (el.contains(seekers[i])) count += 1;
+      if (!isSeekButton(buttons[i])) continue;
+      el = buttons[i].parentElement;
+      hops = 0;
+      while (el && hops < 6) {
+        if (isSeekBar(el)) return el;
+        el = el.parentElement;
+        hops += 1;
       }
-      if (count >= 4) best = el;
-      if (classNames(el).some(isSmHiddenClass) && count >= 4) return el;
-      el = el.parentElement;
     }
-    return best;
+    return null;
   }
 
   function savedHideClasses(bar) {
@@ -922,8 +1004,8 @@
     if (!bar) return;
     bar.setAttribute(CTRL_ATTR, "1");
     hideClasses = savedHideClasses(bar);
-    force = isPhoneLandscape() || !!fullscreenRoot();
-    if (force) {
+    force = !!fullscreenRoot();
+    if (isPhoneLandscape() || force) {
       for (i = 0; i < hideClasses.length; i++) bar.classList.remove(hideClasses[i]);
     } else {
       for (i = 0; i < hideClasses.length; i++) bar.classList.add(hideClasses[i]);
