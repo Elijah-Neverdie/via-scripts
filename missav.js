@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.4
+// @version      1.4.5
 // @description  单击开关原生播放器控制条，双击快进快退/播放暂停，持续屏蔽右下角广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 9) return;
-    window.__viaMissavGestureHook = 9;
+    if (window.__viaMissavGestureHook === 10) return;
+    window.__viaMissavGestureHook = 10;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -603,6 +603,8 @@
         "#via-missav-seekbar button svg{display:block;}" +
         "#via-missav-seekbar button span{font-size:11px;margin-top:1px;opacity:.92;}" +
         "[data-via-missav-site-seek='1'],[data-via-missav-controls='1']{display:none!important;}" +
+        "button[data-plyr='settings'] .via-dl{display:flex;align-items:center;justify-content:center;pointer-events:none;}" +
+        "button[data-plyr='settings'] .via-dl svg{width:18px;height:18px;display:block;}" +
         "@keyframes via-seek-fade{0%{opacity:0}10%{opacity:1}65%{opacity:1}100%{opacity:0}}" +
         "@keyframes via-play-pulse{0%{transform:translate(-50%,-50%) scale(.82);opacity:.55}60%{transform:translate(-50%,-50%) scale(1.06);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}";
     }
@@ -1024,6 +1026,242 @@
       apply(zoneFromPoint(lastTapX));
     }
 
+    function rememberMedia(url) {
+      var text = String(url || "");
+      if (!text || text.indexOf("blob:") === 0) return;
+      if (!/^https?:/i.test(text)) return;
+      window.__viaMediaUrl = text;
+    }
+
+    function hookHls() {
+      var Hls = window.Hls;
+      var origLoad;
+      var origAttach;
+      if (!Hls || !Hls.prototype || Hls.prototype.__viaLoad) return;
+      origLoad = Hls.prototype.loadSource;
+      origAttach = Hls.prototype.attachMedia;
+      if (typeof origLoad !== "function") return;
+      Hls.prototype.__viaLoad = true;
+      Hls.prototype.loadSource = function (url) {
+        var main = videoEl();
+        this.__viaUrl = url;
+        if (!this.media || !main || this.media === main) {
+          rememberMedia(url);
+          window.__viaHls = this;
+        }
+        return origLoad.apply(this, arguments);
+      };
+      if (typeof origAttach === "function") {
+        Hls.prototype.attachMedia = function (media) {
+          var result = origAttach.apply(this, arguments);
+          if (media && media === videoEl()) {
+            window.__viaHls = this;
+            if (this.__viaUrl) rememberMedia(this.__viaUrl);
+          }
+          return result;
+        };
+      }
+    }
+
+    function hlsOf() {
+      var video = videoEl();
+      var player = window.player;
+      hookHls();
+      if (window.__viaHls && video && window.__viaHls.media === video) return window.__viaHls;
+      if (video && video.hls) return video.hls;
+      if (player && player.hls) return player.hls;
+      if (player && player.media && player.media.hls) return player.media.hls;
+      if (window.hls && window.hls.url) return window.hls;
+      return null;
+    }
+
+    function levelUrl(hls) {
+      var level;
+      var urls;
+      var index;
+      if (!hls) return "";
+      index = hls.currentLevel;
+      if (!(index >= 0)) index = hls.loadLevel;
+      try {
+        if (index >= 0 && hls.levels && hls.levels[index]) {
+          level = hls.levels[index];
+          urls = level.url;
+          if (typeof urls === "string") return urls;
+          if (urls && urls.length) return urls[0];
+        }
+      } catch (e) {}
+      return hls.url || hls.__viaUrl || "";
+    }
+
+    function sniffedMedia() {
+      var list;
+      var i;
+      var name;
+      var mp4 = "";
+      if (!window.performance || !performance.getEntriesByType) return "";
+      try {
+        list = performance.getEntriesByType("resource") || [];
+      } catch (e) {
+        return "";
+      }
+      for (i = list.length - 1; i >= 0; i--) {
+        name = list[i].name || "";
+        if (/\.m3u8(\?|#|$)/i.test(name)) return name;
+        if (!mp4 && /\.mp4(\?|#|$)/i.test(name)) mp4 = name;
+      }
+      return mp4;
+    }
+
+    function readMedia() {
+      var hls = hlsOf();
+      var video = videoEl();
+      var player = window.player;
+      var url = levelUrl(hls);
+      var sources;
+      var i;
+      var src;
+      if (!url && video) {
+        sources = video.querySelectorAll("source");
+        for (i = 0; i < sources.length; i++) {
+          src = sources[i].src || sources[i].getAttribute("src") || "";
+          if (src && src.indexOf("blob:") !== 0) {
+            url = src;
+            break;
+          }
+        }
+      }
+      if (!url && player && player.source && player.source.sources) {
+        sources = player.source.sources;
+        for (i = 0; i < sources.length; i++) {
+          src = sources[i] && sources[i].src;
+          if (src && String(src).indexOf("blob:") !== 0) {
+            url = src;
+            break;
+          }
+        }
+      }
+      if (!url && video && video.currentSrc && video.currentSrc.indexOf("blob:") !== 0) url = video.currentSrc;
+      if (!url) url = sniffedMedia();
+      if (url) rememberMedia(url);
+      return window.__viaMediaUrl || url || "";
+    }
+
+    function copyUrlFallback(text) {
+      var ta = document.createElement("textarea");
+      var ok = false;
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        ok = document.execCommand("copy");
+      } catch (e) {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    function copyUrl(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(function () {
+          if (!copyUrlFallback(text)) throw new Error("copy");
+        });
+      }
+      return copyUrlFallback(text) ? Promise.resolve() : Promise.reject(new Error("copy"));
+    }
+
+    function downloadToast(message, failed) {
+      var tip = document.getElementById("via-missav-dl-toast");
+      if (!tip) {
+        tip = document.createElement("div");
+        tip.id = "via-missav-dl-toast";
+        tip.setAttribute("data-via-missav-keep", "1");
+        tip.style.cssText =
+          "position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:2147483647;" +
+          "padding:8px 14px;border-radius:999px;background:rgba(20,20,20,.92);color:#fff;" +
+          "font-size:14px;font-weight:400;line-height:1.3;pointer-events:none;";
+        (document.body || document.documentElement).appendChild(tip);
+      }
+      tip.textContent = message;
+      tip.style.border = failed ? "1px solid #bf616a" : "1px solid transparent";
+      tip.style.display = "block";
+      if (downloadToast.timer) window.clearTimeout(downloadToast.timer);
+      downloadToast.timer = window.setTimeout(function () {
+        tip.style.display = "none";
+      }, 1600);
+    }
+
+    function armDownload(btn) {
+      var tip;
+      var svgs;
+      var i;
+      var svg;
+      if (!btn) return;
+      btn.setAttribute("data-via-download", "1");
+      btn.setAttribute("aria-label", "下载");
+      tip = btn.querySelector(".plyr__tooltip");
+      if (tip) tip.textContent = "下载";
+      svgs = btn.querySelectorAll("svg");
+      for (i = 0; i < svgs.length; i++) {
+        svg = svgs[i];
+        if (svg.closest && svg.closest(".via-dl")) continue;
+        if (svg.parentNode) svg.parentNode.removeChild(svg);
+      }
+      if (!btn.querySelector(".via-dl")) {
+        btn.insertAdjacentHTML(
+          "afterbegin",
+          '<span class="via-dl"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' +
+            '<path fill="currentColor" d="M12 3v9.2l3.3-3.3 1.4 1.4L12 15.9 7.3 10.3l1.4-1.4L12 12.2V3zM5 18h14v2H5z"/>' +
+            "</svg></span>"
+        );
+      }
+    }
+
+    function armDownloads() {
+      var nodes = document.querySelectorAll('button[data-plyr="settings"]');
+      var i;
+      hookHls();
+      readMedia();
+      for (i = 0; i < nodes.length; i++) armDownload(nodes[i]);
+    }
+
+    function onDownloadPress(event) {
+      var btn = event.target && event.target.closest && event.target.closest('button[data-plyr="settings"]');
+      var menu;
+      var panel;
+      var url;
+      if (!btn) return;
+      armDownload(btn);
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      menu = btn.closest && btn.closest(".plyr__menu");
+      panel = menu && menu.querySelector(".plyr__menu__container");
+      if (panel) panel.setAttribute("hidden", "");
+      btn.setAttribute("aria-expanded", "false");
+      if (event.type === "touchend") {
+        lastBtnTouch = Date.now();
+      } else if (Date.now() - lastBtnTouch < 700) {
+        return;
+      }
+      url = readMedia();
+      if (!url) {
+        downloadToast("没有找到下载链接", true);
+        return;
+      }
+      copyUrl(url).then(
+        function () {
+          downloadToast("已复制下载链接", false);
+        },
+        function () {
+          downloadToast("复制失败", true);
+        }
+      );
+    }
+
     injectStyle();
     removeLegacyLayer();
     document.addEventListener(
@@ -1050,9 +1288,12 @@
       },
       true
     );
+    document.addEventListener("touchend", onDownloadPress, true);
+    document.addEventListener("click", onDownloadPress, true);
     document.addEventListener("dblclick", onDblClick, true);
     disablePlyr();
     hookVideo();
+    armDownloads();
     if (isWatchPage()) {
       ensureOverlay();
       setUi(false);
@@ -1072,15 +1313,16 @@
         }
       }
       paintControls(uiShown);
+      armDownloads();
     }, 800);
   }
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "9") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "10") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "9");
+      document.documentElement.setAttribute("data-via-missav-gesture", "10");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
