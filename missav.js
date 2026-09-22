@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.6
-// @description  单击显隐控制条，双击快进快退/播放暂停并在视频上显示反馈图标
+// @version      1.3.7
+// @description  仅在播放页的原始播放器内加入手势和反馈，持续屏蔽右下角悬浮广告
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -348,11 +348,11 @@
     if (!node || !node.closest) return false;
     return Boolean(
       node.closest(
-        ".plyr__controls, .plyr__menu, .plyr__progress, [" +
+        ".plyr__controls, .plyr__menu, .plyr__progress, .plyr__control--overlaid, [" +
           CTRL_ATTR +
           "], #" +
           BTN_ID +
-          ", #via-missav-play, #via-missav-seekbar"
+          ", #via-missav-seekbar, #via-missav-hud"
       )
     );
   }
@@ -393,7 +393,7 @@
       if (!node || !node.closest) return false;
       return Boolean(
         node.closest(
-          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-play,#via-missav-seekbar"
+          ".plyr__controls,.plyr__menu,.plyr__progress,.plyr__control--overlaid,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-seekbar,#via-missav-hud"
         )
       );
     }
@@ -519,13 +519,21 @@
       else pauseNow();
     }
 
-    function overlayHost() {
-      return (
-        document.fullscreenElement ||
-        document.webkitFullscreenElement ||
-        document.body ||
-        document.documentElement
-      );
+    function isWatchPage() {
+      var path = location.pathname || "";
+      if (/\/[a-z]{2,14}-\d{2,6}/i.test(path)) return true;
+      return Boolean(document.querySelector("#player video, video.player, .plyr video"));
+    }
+
+    function videoHost() {
+      var v = videoEl();
+      if (!v) return null;
+      return (v.closest && (v.closest(".plyr__video-wrapper") || v.closest(".plyr") || v.closest("#player"))) || v.parentElement;
+    }
+
+    function removeLegacyLayer() {
+      var dead = document.getElementById("via-missav-layer");
+      if (dead && dead.parentNode) dead.parentNode.removeChild(dead);
     }
 
     function injectStyle() {
@@ -534,35 +542,32 @@
       style = document.createElement("style");
       style.id = "via-missav-gesture-style";
       style.textContent =
-        ".plyr__control--overlaid{display:none!important;}" +
+        "#via-missav-layer{display:none!important;}" +
         ".plyr.via-ui-on .plyr__controls,.plyr.via-ui-on.plyr--hide-controls .plyr__controls{" +
-        "opacity:1!important;visibility:visible!important;pointer-events:auto!important;" +
-        "transform:none!important;display:flex!important;}" +
+        "opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:none!important;}" +
         ".plyr:not(.via-ui-on) .plyr__controls{opacity:0!important;pointer-events:none!important;}" +
-        "#via-missav-layer{position:fixed;z-index:2147483646;pointer-events:none;overflow:hidden;}" +
-        "#via-missav-layer .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
-        "#via-missav-layer .via-side.left{left:0;}" +
-        "#via-missav-layer .via-side.right{right:0;}" +
-        "#via-missav-layer .via-side.on{opacity:1;animation:via-seek-fade .8s ease forwards;}" +
-        "#via-missav-layer .via-ripple{position:absolute;width:210%;height:0;padding-bottom:210%;border-radius:50%;background:rgba(255,255,255,.22);top:50%;}" +
-        "#via-missav-layer .via-side.left .via-ripple{right:8%;transform:translate(40%,-50%);}" +
-        "#via-missav-layer .via-side.right .via-ripple{left:8%;transform:translate(-40%,-50%);}" +
-        "#via-missav-layer .via-face{position:relative;z-index:1;color:#fff;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.55);}" +
-        "#via-missav-layer .via-face b{display:block;font-size:14px;font-weight:600;}" +
-        "#via-missav-layer .via-chevrons{display:flex;justify-content:center;align-items:center;height:32px;}" +
-        "#via-missav-layer .via-side.on .via-chev{animation:via-chevron .55s ease;}" +
-        "#via-missav-layer .via-side.on .via-chev:nth-child(2){animation-delay:.06s;}" +
-        "#via-missav-layer .via-side.on .via-chev:nth-child(3){animation-delay:.12s;}" +
-        "#via-missav-play{pointer-events:auto;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border:0;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;z-index:3;padding:0;}" +
-        "#via-missav-play.show,#via-missav-play.flash{display:flex!important;}" +
-        "#via-missav-play.pulse{animation:via-play-pulse .4s ease;}" +
-        "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:56px;z-index:4;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
-        "#via-missav-layer.via-ui-on #via-missav-seekbar{display:flex!important;}" +
+        "#via-missav-hud{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:hidden;}" +
+        "#via-missav-hud .via-side{position:absolute;top:0;bottom:0;width:36%;display:flex;align-items:center;justify-content:center;opacity:0;}" +
+        "#via-missav-hud .via-side.left{left:0;}" +
+        "#via-missav-hud .via-side.right{right:0;}" +
+        "#via-missav-hud .via-side.on{opacity:1;animation:via-seek-fade .8s ease forwards;}" +
+        "#via-missav-hud .via-ripple{position:absolute;width:210%;height:0;padding-bottom:210%;border-radius:50%;background:rgba(255,255,255,.22);top:50%;}" +
+        "#via-missav-hud .via-side.left .via-ripple{right:8%;transform:translate(40%,-50%);}" +
+        "#via-missav-hud .via-side.right .via-ripple{left:8%;transform:translate(-40%,-50%);}" +
+        "#via-missav-hud .via-face{position:relative;z-index:1;color:#fff;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.55);}" +
+        "#via-missav-hud .via-face b{display:block;font-size:14px;font-weight:600;}" +
+        "#via-missav-hud .via-chevrons{display:flex;justify-content:center;align-items:center;height:32px;}" +
+        "#via-missav-hud .via-side.on .via-chev{animation:via-chevron .55s ease;}" +
+        "#via-missav-hud .via-side.on .via-chev:nth-child(2){animation-delay:.06s;}" +
+        "#via-missav-hud .via-side.on .via-chev:nth-child(3){animation-delay:.12s;}" +
+        "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
+        "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
+        "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
+        ".plyr.via-ui-on #via-missav-seekbar{display:flex!important;}" +
         "#via-missav-seekbar .via-seek-group{display:flex;align-items:center;gap:2px;}" +
         "#via-missav-seekbar button{appearance:none;-webkit-appearance:none;background:transparent;border:0;color:inherit;padding:6px 8px;margin:0;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:40px;line-height:1;}" +
-        "#via-missav-seekbar button:hover,#via-missav-seekbar button:focus{background:rgba(255,255,255,.12);}" +
         "#via-missav-seekbar button svg{display:block;}" +
-        "#via-missav-seekbar button span{font-size:11px;margin-top:1px;opacity:.92;font-family:inherit;}" +
+        "#via-missav-seekbar button span{font-size:11px;margin-top:1px;opacity:.92;}" +
         "[data-via-missav-site-seek='1'],[data-via-missav-controls='1']{display:none!important;}" +
         "@keyframes via-seek-fade{0%{opacity:0}10%{opacity:1}65%{opacity:1}100%{opacity:0}}" +
         "@keyframes via-chevron{0%{opacity:0;transform:scale(.7)}35%{opacity:1;transform:scale(1)}100%{opacity:.35;transform:scale(1)}}" +
@@ -624,17 +629,6 @@
       );
     }
 
-    function layoutLayer() {
-      var layer = document.getElementById("via-missav-layer");
-      var rect;
-      if (!layer) return;
-      rect = boxRect();
-      layer.style.left = Math.round(rect.left) + "px";
-      layer.style.top = Math.round(rect.top) + "px";
-      layer.style.width = Math.max(1, Math.round(rect.width)) + "px";
-      layer.style.height = Math.max(1, Math.round(rect.height)) + "px";
-    }
-
     function ensureSeekBar(host) {
       var bar = document.getElementById("via-missav-seekbar");
       var groups;
@@ -678,65 +672,48 @@
     }
 
     function ensureOverlay() {
-      var host = overlayHost();
+      var host;
+      var root;
       var wrap;
-      var playBtn;
-      if (!host) return null;
-      wrap = document.getElementById("via-missav-layer");
+      var flash;
+      removeLegacyLayer();
+      if (!isWatchPage()) return null;
+      host = videoHost();
+      root = playerRoot();
+      if (!host || !root) return null;
+      if (window.getComputedStyle && window.getComputedStyle(host).position === "static") {
+        host.style.position = "relative";
+      }
+      wrap = document.getElementById("via-missav-hud");
       if (!wrap) {
         wrap = document.createElement("div");
-        wrap.id = "via-missav-layer";
+        wrap.id = "via-missav-hud";
         wrap.setAttribute("data-via-missav-keep", "1");
         wrap.innerHTML =
           '<div class="via-side left"><i class="via-ripple"></i><div class="via-face"></div></div>' +
           '<div class="via-side right"><i class="via-ripple"></i><div class="via-face"></div></div>' +
-          '<button type="button" id="via-missav-play" aria-label="播放"></button>';
+          '<div class="via-flash" aria-hidden="true"></div>';
         host.appendChild(wrap);
-        playBtn = wrap.querySelector("#via-missav-play");
-        bindPress(playBtn, function () {
-          if (isPaused()) playNow();
-          else pauseNow();
-          window.setTimeout(function () {
-            flashPlay();
-            setUi(true);
-          }, 0);
-        });
       } else if (wrap.parentElement !== host) {
         host.appendChild(wrap);
       }
-      ensureSeekBar(wrap);
-      layoutLayer();
+      flash = wrap.querySelector(".via-flash");
+      if (flash && !flash.innerHTML) flash.innerHTML = playSvg();
+      ensureSeekBar(root);
       return wrap;
     }
 
-    function syncPlayIcon(pulse) {
-      var btn = document.getElementById("via-missav-play");
-      if (!btn) return;
-      btn.innerHTML = isPaused() ? playSvg() : pauseSvg();
-      btn.setAttribute("aria-label", isPaused() ? "播放" : "暂停");
-      if (pulse) {
-        btn.classList.remove("pulse");
-        void btn.offsetWidth;
-        btn.classList.add("pulse");
-      }
-    }
-
-    function showPlayBtn(show) {
-      var btn = document.getElementById("via-missav-play");
-      if (!btn) return;
-      if (show) btn.classList.add("show");
-      else btn.classList.remove("show");
-    }
-
     function flashPlay() {
-      var btn = document.getElementById("via-missav-play");
-      if (!btn) return;
-      syncPlayIcon(true);
-      btn.classList.add("show", "flash");
+      var wrap = ensureOverlay();
+      var flash = wrap && wrap.querySelector(".via-flash");
+      if (!flash) return;
+      flash.innerHTML = isPaused() ? playSvg() : pauseSvg();
+      flash.classList.remove("on");
+      void flash.offsetWidth;
+      flash.classList.add("on");
       if (flashPlay.timer) window.clearTimeout(flashPlay.timer);
       flashPlay.timer = window.setTimeout(function () {
-        btn.classList.remove("flash");
-        if (!(uiShown || isPaused() || !userPlayed)) btn.classList.remove("show");
+        flash.classList.remove("on");
       }, 850);
     }
 
@@ -751,12 +728,10 @@
 
     function setUi(shown) {
       var root = playerRoot();
-      var layer = ensureOverlay();
+      var player = window.player;
+      if (!isWatchPage()) return;
       uiShown = !!shown;
-      if (layer) {
-        if (uiShown) layer.classList.add("via-ui-on");
-        else layer.classList.remove("via-ui-on");
-      }
+      ensureOverlay();
       if (root && root.classList) {
         if (uiShown) {
           root.classList.add("via-ui-on");
@@ -766,9 +741,11 @@
           root.classList.add("plyr--hide-controls");
         }
       }
-      layoutLayer();
-      syncPlayIcon(false);
-      showPlayBtn(uiShown || isPaused() || !userPlayed);
+      if (player && typeof player.toggleControls === "function") {
+        try {
+          player.toggleControls(uiShown);
+        } catch (e) {}
+      }
       if (uiShown) scheduleHide();
     }
 
@@ -779,7 +756,6 @@
       var amount;
       var sides;
       var s;
-      layoutLayer();
       if (!wrap) return;
       if (seekSide !== side) seekStreak = 0;
       seekSide = side;
@@ -791,7 +767,6 @@
         face.innerHTML =
           chevrons(side) + "<b>" + (side === "left" ? "−" : "+") + amount + " 秒</b>";
       }
-      showPlayBtn(false);
       sides = wrap.querySelectorAll(".via-side");
       for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
       if (panel) {
@@ -802,7 +777,6 @@
       sideTimer = window.setTimeout(function () {
         sides = wrap.querySelectorAll(".via-side");
         for (s = 0; s < sides.length; s++) sides[s].classList.remove("on");
-        showPlayBtn(uiShown || isPaused() || !userPlayed);
       }, 750);
       if (seekTimer) window.clearTimeout(seekTimer);
       seekTimer = window.setTimeout(function () {
@@ -815,40 +789,13 @@
       var video = videoEl();
       if (!video || video.__viaUiHook) return;
       video.__viaUiHook = true;
-      video.autoplay = false;
       video.addEventListener("play", function () {
-        if (!userPlayed) {
-          pauseNow();
-          setUi(true);
-          return;
-        }
-        syncPlayIcon(false);
+        userPlayed = true;
         scheduleHide();
       });
       video.addEventListener("pause", function () {
-        syncPlayIcon(false);
         setUi(true);
       });
-    }
-
-    function primePaused() {
-      var video = videoEl();
-      if (!video && !window.player) return;
-      if (!primed) {
-        primed = true;
-        userPlayed = false;
-        try {
-          if (video) {
-            video.autoplay = false;
-            video.pause();
-          }
-          if (window.player && typeof window.player.pause === "function") {
-            window.player.pause();
-          }
-        } catch (e) {}
-      }
-      hookVideo();
-      setUi(true);
     }
 
     function apply(side) {
@@ -874,6 +821,7 @@
     }
 
     function onTap(event) {
+      if (!isWatchPage()) return;
       if (chrome(event.target) || !inPlayer(event.target)) return;
       if (event.type === "touchend" && event.touches && event.touches.length) return;
       rememberPoint(event);
@@ -898,6 +846,7 @@
     }
 
     function onDblClick(event) {
+      if (!isWatchPage()) return;
       if (Date.now() - lastTouch < 800) {
         event.preventDefault();
         event.stopPropagation();
@@ -918,7 +867,7 @@
     }
 
     injectStyle();
-    ensureOverlay();
+    removeLegacyLayer();
     document.addEventListener(
       "touchstart",
       function (event) {
@@ -945,32 +894,26 @@
     );
     document.addEventListener("dblclick", onDblClick, true);
     disablePlyr();
-    primePaused();
-    window.addEventListener("resize", layoutLayer);
-    window.addEventListener("orientationchange", layoutLayer);
-    document.addEventListener("fullscreenchange", function () {
+    hookVideo();
+    if (isWatchPage()) {
       ensureOverlay();
-      layoutLayer();
-    });
-    document.addEventListener("webkitfullscreenchange", function () {
-      ensureOverlay();
-      layoutLayer();
-    });
+      setUi(true);
+    }
     window.setInterval(function () {
+      removeLegacyLayer();
+      if (!isWatchPage()) return;
       disablePlyr();
       hookVideo();
       ensureOverlay();
-      layoutLayer();
-      if (!userPlayed) primePaused();
     }, 800);
   }
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "2") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "3") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "2");
+      document.documentElement.setAttribute("data-via-missav-gesture", "3");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
@@ -1077,9 +1020,16 @@
       'body > iframe[style*="position:fixed"],' +
       'body > iframe[style*="position: fixed"],' +
       'html > iframe,' +
+      'iframe[src*="smartpop"],' +
+      'iframe[src*="stripcash"],' +
+      'iframe[src*="inpage"],' +
       '[id*="tsyndicate"],' +
+      '[id*="ts-"],' +
+      '[id*="ts_"],' +
       '[class*="ts-inpage"],' +
       '[class*="inpage-push"],' +
+      '[class*="ts-outstream"],' +
+      '#via-missav-layer,' +
       'body > div:has(iframe[src*="tsyndicate"]),' +
       'body > div:has(iframe[src*="exoclick"]),' +
       'body > div:has(iframe[src*="juicyads"]),' +
@@ -1094,6 +1044,7 @@
       el.id === "player" ||
       el.id === "video" ||
       el.id === "via-missav-layer" ||
+      el.id === "via-missav-hud" ||
       el.id === "via-missav-overlay" ||
       el.id === "via-missav-play" ||
       el.id === "via-missav-seekbar"
@@ -1110,11 +1061,13 @@
   }
 
   function hideNode(el) {
-    if (!el || isProtected(el)) return;
-    if (el.getAttribute("data-via-missav-ad") === "1") return;
+    if (!el || isProtected(el) || isOurUi(el)) return;
     el.setAttribute("data-via-missav-ad", "1");
     el.style.setProperty("display", "none", "important");
+    el.style.setProperty("visibility", "hidden", "important");
     el.style.setProperty("pointer-events", "none", "important");
+    el.style.setProperty("opacity", "0", "important");
+    el.hidden = true;
   }
 
   function looksLikeContent(el) {
@@ -1264,6 +1217,7 @@
         el.id === "via-missav-seek-hint" ||
         el.id === "via-missav-overlay" ||
         el.id === "via-missav-layer" ||
+        el.id === "via-missav-hud" ||
         el.id === "via-missav-play" ||
         el.id === "via-missav-seekbar" ||
         el.getAttribute(CTRL_ATTR) === "1" ||
@@ -1333,7 +1287,8 @@
     compact = rect.width <= 640 && rect.height <= 720;
     hasMedia = Boolean(el.querySelector && el.querySelector("iframe, img, video, a[target='_blank']"));
     if (looksLikeAdMarkup(el)) return true;
-    if (compact && nearRight && nearBottom && (hasMedia || isNaN(z) || z >= 5)) return true;
+    if (el.tagName === "IFRAME" && nearRight && nearBottom) return true;
+    if (compact && nearRight && nearBottom) return true;
     return false;
   }
 
@@ -1371,7 +1326,11 @@
       "[id*='ts-']",
       "[id*='ts_']",
       "[class*='ts-']",
-      "[class*='inpage']"
+      "[class*='inpage']",
+      "iframe[src*='smartpop']",
+      "iframe[src*='stripcash']",
+      "[style*='z-index:999']",
+      "[style*='z-index: 999']"
     ];
     for (g = 0; g < groups.length; g++) {
       try {
@@ -1609,7 +1568,7 @@
       "background:rgba(46,52,64,.96);color:#eceff4;border:1px solid #4c566a;" +
       "box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;max-width:90vw;}" +
       "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}" +
-      ".plyr__control--overlaid{display:none!important;}" +
+      "#via-missav-layer{display:none!important;}" +
       "[" +
       CTRL_ATTR +
       "='1'],[data-via-missav-site-seek='1']{display:none!important;}";
