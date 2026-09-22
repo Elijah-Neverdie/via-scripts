@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.10
+// @version      1.4.11
 // @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 14) return;
-    window.__viaMissavGestureHook = 14;
+    if (window.__viaMissavGestureHook === 15) return;
+    window.__viaMissavGestureHook = 15;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -466,7 +466,55 @@
       return null;
     }
 
-    function clipRect(rect) {
+    function scaleBox(rect, scale) {
+      return {
+        left: rect.left * scale,
+        top: rect.top * scale,
+        right: rect.right * scale,
+        bottom: rect.bottom * scale,
+        width: rect.width * scale,
+        height: rect.height * scale
+      };
+    }
+
+    function viewSize() {
+      var vv = window.visualViewport;
+      var width = window.innerWidth || 1;
+      var height = window.innerHeight || 1;
+      var left = 0;
+      var top = 0;
+      if (vv && vv.width > 0 && vv.height > 0) {
+        width = vv.width;
+        height = vv.height;
+        left = vv.offsetLeft || 0;
+        top = vv.offsetTop || 0;
+      }
+      return { left: left, top: top, width: width, height: height, right: left + width, bottom: top + height };
+    }
+
+    function asCssBox(rect) {
+      var dpr;
+      var view;
+      var widthRatio;
+      if (!rect) return null;
+      dpr = window.devicePixelRatio || 1;
+      view = viewSize();
+      if (dpr > 1 && rect.width > view.width * 1.25) {
+        widthRatio = rect.width / dpr / view.width;
+        if (widthRatio > 0.45 && widthRatio < 1.35) return scaleBox(rect, 1 / dpr);
+      }
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height
+      };
+    }
+
+    function fitView(rect) {
+      var view;
       var left;
       var top;
       var right;
@@ -474,13 +522,14 @@
       var width;
       var height;
       if (!rect) return null;
-      left = Math.max(rect.left, 0);
-      top = Math.max(rect.top, 0);
-      right = Math.min(rect.right, window.innerWidth || rect.right);
-      bottom = Math.min(rect.bottom, window.innerHeight || rect.bottom);
+      view = viewSize();
+      left = Math.max(rect.left, view.left);
+      top = Math.max(rect.top, view.top);
+      right = Math.min(rect.right, view.right);
+      bottom = Math.min(rect.bottom, view.bottom);
       width = right - left;
       height = bottom - top;
-      if (width < 120 || height < 80) return null;
+      if (width < 80 || height < 48) return null;
       return { left: left, top: top, right: right, bottom: bottom, width: width, height: height };
     }
 
@@ -494,10 +543,10 @@
       var area;
       while (node && node !== document.body && hops < 8) {
         if (node.getBoundingClientRect) {
-          rect = clipRect(node.getBoundingClientRect());
+          rect = fitView(asCssBox(node.getBoundingClientRect()));
           if (rect) {
             ratio = rect.height / rect.width;
-            if (ratio > 0.35 && ratio < 0.9) {
+            if (ratio > 0.35 && ratio < 0.95) {
               area = rect.width * rect.height;
               if (area > bestArea) {
                 best = rect;
@@ -516,32 +565,49 @@
       var v = videoEl();
       var fs = fsNode();
       var rect;
+      var view;
       if (fs && fs.getBoundingClientRect) {
-        rect = clipRect(fs.getBoundingClientRect());
-        if (
-          rect &&
-          rect.width >= (window.innerWidth || 1) * 0.7 &&
-          rect.height >= (window.innerHeight || 1) * 0.7
-        ) {
-          return rect;
-        }
+        rect = fitView(asCssBox(fs.getBoundingClientRect()));
+        view = viewSize();
+        if (rect && rect.width >= view.width * 0.7 && rect.height >= view.height * 0.7) return rect;
       }
       rect = pictureRect(v || playerRoot());
       if (rect) return rect;
+      view = viewSize();
       return {
-        left: 0,
-        top: 0,
-        right: window.innerWidth || 1,
-        bottom: window.innerHeight || 1,
-        width: window.innerWidth || 1,
-        height: window.innerHeight || 1
+        left: view.left,
+        top: view.top,
+        right: view.right,
+        bottom: view.bottom,
+        width: view.width,
+        height: view.height
       };
     }
 
-    function zoneFromPoint(x) {
+    function asCssPoint(x, y, rect) {
+      var dpr = window.devicePixelRatio || 1;
+      var sx;
+      var sy;
+      if (x >= rect.left - 2 && x <= rect.right + 2 && y >= rect.top - 2 && y <= rect.bottom + 2) {
+        return { x: x, y: y };
+      }
+      if (dpr > 1) {
+        sx = x / dpr;
+        sy = y / dpr;
+        if (sx >= rect.left - 4 && sx <= rect.right + 4 && sy >= rect.top - 4 && sy <= rect.bottom + 4) {
+          return { x: sx, y: sy };
+        }
+      }
+      return { x: x, y: y };
+    }
+
+    function zoneFromPoint(x, y) {
       var rect = boxRect();
+      var point = asCssPoint(x, y, rect);
       var width = rect.width || 1;
-      var local = x - rect.left;
+      var local = point.x - rect.left;
+      if (local < 0) local = 0;
+      if (local > width) local = width;
       if (local < width / 3) return "left";
       if (local > (width * 2) / 3) return "right";
       return "center";
@@ -1074,7 +1140,7 @@
       if (pending) {
         window.clearTimeout(pending);
         pending = 0;
-        apply(zoneFromPoint(lastTapX));
+        apply(zoneFromPoint(lastTapX, lastTapY));
         return;
       }
       pending = window.setTimeout(function () {
@@ -1101,7 +1167,7 @@
         pending = 0;
       }
       rememberPoint(event);
-      apply(zoneFromPoint(lastTapX));
+      apply(zoneFromPoint(lastTapX, lastTapY));
     }
 
     function rememberMedia(url) {
@@ -1888,7 +1954,7 @@
       }
       skipTap = Date.now() + 900;
       rect = boxRect();
-      slide.mode = slide.x - rect.left < (rect.width || 1) / 2 ? "bright" : "vol";
+      slide.mode = asCssPoint(slide.x, slide.y, rect).x - rect.left < (rect.width || 1) / 2 ? "bright" : "vol";
       if (event.cancelable) event.preventDefault();
       updateSlide(dy);
     }
@@ -2041,10 +2107,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "14") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "15") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "14");
+      document.documentElement.setAttribute("data-via-missav-gesture", "15");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
@@ -2537,9 +2603,48 @@
     return false;
   }
 
+  function screenView() {
+    var vv = window.visualViewport;
+    var width = window.innerWidth || 1;
+    var height = window.innerHeight || 1;
+    var left = 0;
+    var top = 0;
+    if (vv && vv.width > 0 && vv.height > 0) {
+      width = vv.width;
+      height = vv.height;
+      left = vv.offsetLeft || 0;
+      top = vv.offsetTop || 0;
+    }
+    return { left: left, top: top, width: width, height: height, right: left + width, bottom: top + height };
+  }
+
+  function cssScreenBox(rect) {
+    var dpr;
+    var view;
+    var ratio;
+    if (!rect) return null;
+    dpr = window.devicePixelRatio || 1;
+    view = screenView();
+    if (dpr > 1 && rect.width > view.width * 1.25) {
+      ratio = rect.width / dpr / view.width;
+      if (ratio > 0.45 && ratio < 1.35) {
+        return {
+          left: rect.left / dpr,
+          top: rect.top / dpr,
+          right: rect.right / dpr,
+          bottom: rect.bottom / dpr,
+          width: rect.width / dpr,
+          height: rect.height / dpr
+        };
+      }
+    }
+    return rect;
+  }
+
   function isFloatingAd(el) {
     var style;
     var rect;
+    var view;
     var z;
     var nearRight;
     var nearBottom;
@@ -2556,17 +2661,18 @@
     if (style.position !== "fixed" && style.position !== "sticky" && style.position !== "absolute") {
       return looksLikeAdMarkup(el) && (el.tagName === "IFRAME" || el.tagName === "VIDEO");
     }
-    rect = el.getBoundingClientRect();
+    rect = cssScreenBox(el.getBoundingClientRect());
+    view = screenView();
     if (rect.width < 36 || rect.height < 36) return false;
-    if (rect.width >= window.innerWidth * 0.92 && rect.height >= window.innerHeight * 0.55) {
+    if (rect.width >= view.width * 0.92 && rect.height >= view.height * 0.55) {
       return looksLikeAdMarkup(el);
     }
-    if (rect.width >= window.innerWidth * 0.8 && rect.height <= 160 && rect.bottom >= window.innerHeight - 24) {
+    if (rect.width >= view.width * 0.8 && rect.height <= 160 && rect.bottom >= view.bottom - 24) {
       return el.id === "b-a-b" || looksLikeAdMarkup(el);
     }
     z = parseInt(style.zIndex, 10);
-    nearRight = rect.right >= window.innerWidth - 220;
-    nearBottom = rect.bottom >= window.innerHeight - 240;
+    nearRight = rect.right >= view.right - Math.min(220, view.width * 0.28);
+    nearBottom = rect.bottom >= view.bottom - Math.min(240, view.height * 0.22);
     compact = rect.width <= 640 && rect.height <= 720;
     hasMedia = Boolean(el.querySelector && el.querySelector("iframe, img, video, a[target='_blank']"));
     if (looksLikeAdMarkup(el)) return true;
@@ -2671,17 +2777,19 @@
     var stack;
     var i;
     var host;
+    var view;
     if (!isWatchPath() || !document.elementsFromPoint) return;
+    view = screenView();
     points = [
-      [window.innerWidth - 16, window.innerHeight - 16],
-      [window.innerWidth - 48, window.innerHeight - 48],
-      [window.innerWidth - 16, window.innerHeight - 120],
-      [window.innerWidth - 140, window.innerHeight - 16],
-      [window.innerWidth - 80, window.innerHeight - 80],
-      [window.innerWidth - 200, window.innerHeight - 90],
-      [window.innerWidth - 80, window.innerHeight - 200],
-      [window.innerWidth - 280, window.innerHeight - 110],
-      [window.innerWidth - 180, window.innerHeight - 180]
+      [view.right - 16, view.bottom - 16],
+      [view.right - 48, view.bottom - 48],
+      [view.right - 16, view.bottom - 120],
+      [view.right - 140, view.bottom - 16],
+      [view.right - 80, view.bottom - 80],
+      [view.right - 200, view.bottom - 90],
+      [view.right - 80, view.bottom - 200],
+      [view.right - Math.min(280, view.width * 0.22), view.bottom - 110],
+      [view.right - 180, view.bottom - 180]
     ];
     for (p = 0; p < points.length; p++) {
       try {
@@ -2707,24 +2815,26 @@
     var hops;
     var rect;
     var style;
+    var view;
     for (i = 0; i < videos.length; i++) {
       el = videos[i];
       if (holdsMainPlayer(el) || inRecommendCard(el)) continue;
       host = el;
       hops = 0;
+      view = screenView();
       while (host && host !== document.body && hops < 7) {
         if (inRecommendCard(host) || looksLikeVideoCard(host) || holdsMainPlayer(host)) break;
         style = window.getComputedStyle ? window.getComputedStyle(host) : null;
-        rect = host.getBoundingClientRect();
+        rect = cssScreenBox(host.getBoundingClientRect());
         if (
           style &&
           (style.position === "fixed" || style.position === "sticky") &&
           rect.width >= 72 &&
-          rect.width <= Math.min(520, window.innerWidth * 0.62) &&
+          rect.width <= Math.min(520, view.width * 0.62) &&
           rect.height >= 72 &&
           rect.height <= 420 &&
-          rect.right >= window.innerWidth - 240 &&
-          rect.bottom >= window.innerHeight - 280
+          rect.right >= view.right - Math.min(240, view.width * 0.3) &&
+          rect.bottom >= view.bottom - Math.min(280, view.height * 0.24)
         ) {
           hideFloatingAdTree(host);
           break;
