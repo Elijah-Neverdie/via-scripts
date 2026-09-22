@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.3.1
-// @description  分享旁复制按钮、屏蔽播放页广告，跳过首次播放弹窗，横屏仅保留快进快退条且不改页面布局
+// @version      1.3.2
+// @description  分享旁复制按钮、持续屏蔽延后出现的右下角悬浮广告，跳过首次播放弹窗，横屏仅保留快进快退条
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -445,6 +445,15 @@
       'iframe[src*="myavlive"],' +
       'iframe[src*="doubleclick"],' +
       'iframe[src*="googlesyndication"],' +
+      'body > iframe[style*="position:fixed"],' +
+      'body > iframe[style*="position: fixed"],' +
+      'html > iframe,' +
+      '[id*="tsyndicate"],' +
+      '[class*="ts-inpage"],' +
+      '[class*="inpage-push"],' +
+      'body > div:has(iframe[src*="tsyndicate"]),' +
+      'body > div:has(iframe[src*="exoclick"]),' +
+      'body > div:has(iframe[src*="juicyads"]),' +
       '[data-via-missav-ad="1"]{display:none!important;pointer-events:none!important;height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}';
     parent.appendChild(style);
   }
@@ -463,6 +472,7 @@
 
   function hideNode(el) {
     if (!el || isProtected(el)) return;
+    if (el.getAttribute("data-via-missav-ad") === "1") return;
     el.setAttribute("data-via-missav-ad", "1");
     el.style.setProperty("display", "none", "important");
     el.style.setProperty("pointer-events", "none", "important");
@@ -607,37 +617,219 @@
     }
   }
 
-  function hideCornerWidgets() {
-    var nodes = document.querySelectorAll("body > div, body > iframe, body > aside");
-    var i;
-    var el;
+  function isOurUi(el) {
+    return (
+      el &&
+      (el.id === BTN_ID ||
+        el.id === "via-missav-toast" ||
+        el.getAttribute(CTRL_ATTR) === "1" ||
+        el.getAttribute(BTN_ATTR) === "1")
+    );
+  }
+
+  function containsProtected(el) {
+    if (!el || !el.querySelector) return false;
+    return Boolean(
+      el.querySelector("video, h1, #" + BTN_ID + ", #via-missav-toast, [" + CTRL_ATTR + "]")
+    );
+  }
+
+  function looksLikeAdMarkup(el) {
+    var blob =
+      ((el.id || "") +
+        " " +
+        (el.className && el.className.toString ? el.className.toString() : "") +
+        " " +
+        (el.getAttribute("src") || "") +
+        " " +
+        (el.getAttribute("data-src") || ""))
+        .toLowerCase();
+    if (AD_HOST_RE.test(blob)) return true;
+    if (/tsyndicate|exoclick|juicyads|myavlive|adsbygoogle|inpage|popunder|popmag|hilltop|adsterra/.test(blob)) {
+      return true;
+    }
+    try {
+      return /tsyndicate|exoclick|juicyads|myavlive|adsbygoogle|inpage.push|campaignid/i.test(
+        (el.outerHTML || "").slice(0, 2500)
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function isFloatingAd(el) {
     var style;
     var rect;
-    for (i = 0; i < nodes.length; i++) {
-      el = nodes[i];
-      if (isProtected(el) || el.id === BTN_ID) continue;
-      if (el.id === "b-a-b") {
-        hideNode(el);
-        continue;
+    var z;
+    var nearRight;
+    var nearBottom;
+    var compact;
+    var hasMedia;
+    if (!el || el.nodeType !== 1 || isProtected(el) || isOurUi(el)) return false;
+    if (containsProtected(el)) return false;
+    if (el.id === "b-a-b" || el.hasAttribute("data-ts-spot")) return true;
+    if (el.tagName === "IFRAME" && looksLikeAdMarkup(el)) return true;
+    if (!window.getComputedStyle) return looksLikeAdMarkup(el);
+    style = window.getComputedStyle(el);
+    if (!style) return false;
+    if (style.position !== "fixed" && style.position !== "sticky") {
+      return looksLikeAdMarkup(el) && el.tagName === "IFRAME";
+    }
+    rect = el.getBoundingClientRect();
+    if (rect.width < 36 || rect.height < 36) return false;
+    if (rect.width >= window.innerWidth * 0.92 && rect.height >= window.innerHeight * 0.55) {
+      return looksLikeAdMarkup(el);
+    }
+    if (rect.width >= window.innerWidth * 0.8 && rect.height <= 160 && rect.bottom >= window.innerHeight - 24) {
+      return el.id === "b-a-b" || looksLikeAdMarkup(el);
+    }
+    z = parseInt(style.zIndex, 10);
+    nearRight = rect.right >= window.innerWidth - 180;
+    nearBottom = rect.bottom >= window.innerHeight - 180;
+    compact = rect.width <= 640 && rect.height <= 720;
+    hasMedia = Boolean(el.querySelector && el.querySelector("iframe, img, video, a[target='_blank']"));
+    if (looksLikeAdMarkup(el)) return true;
+    if (compact && nearRight && nearBottom && (hasMedia || isNaN(z) || z >= 5)) return true;
+    return false;
+  }
+
+  function collectFloatCandidates() {
+    var list = [];
+    var seen = [];
+    var add = function (el) {
+      var i;
+      if (!el || el.nodeType !== 1) return;
+      for (i = 0; i < seen.length; i++) {
+        if (seen[i] === el) return;
       }
-      style = window.getComputedStyle ? window.getComputedStyle(el) : null;
-      if (!style || (style.position !== "fixed" && style.position !== "sticky")) continue;
-      if (el.querySelector && el.querySelector("video, h1, #" + BTN_ID + ", [" + CTRL_ATTR + "]")) {
-        continue;
-      }
-      rect = el.getBoundingClientRect();
-      if (rect.width >= window.innerWidth * 0.9 && rect.height >= window.innerHeight * 0.5) {
-        continue;
-      }
-      if (
-        rect.width <= 420 &&
-        rect.height <= 420 &&
-        rect.right >= window.innerWidth - 96 &&
-        rect.bottom >= window.innerHeight - 96
-      ) {
-        hideNode(el);
+      seen.push(el);
+      list.push(el);
+    };
+    var groups;
+    var g;
+    var n;
+    var i;
+    if (document.body) {
+      for (n = document.body.firstElementChild; n; n = n.nextElementSibling) add(n);
+    }
+    if (document.documentElement) {
+      for (n = document.documentElement.firstElementChild; n; n = n.nextElementSibling) {
+        if (n !== document.head && n !== document.body) add(n);
       }
     }
+    groups = [
+      "iframe",
+      "[data-ts-spot]",
+      "#b-a-b",
+      "[style*='position:fixed']",
+      "[style*='position: fixed']",
+      "[class*='fixed']",
+      "[id*='ts-']",
+      "[id*='ts_']",
+      "[class*='ts-']",
+      "[class*='inpage']"
+    ];
+    for (g = 0; g < groups.length; g++) {
+      try {
+        n = document.querySelectorAll(groups[g]);
+      } catch (e) {
+        n = [];
+      }
+      for (i = 0; i < n.length; i++) add(n[i]);
+    }
+    return list;
+  }
+
+  function hideFloatingAdTree(el) {
+    var parent;
+    hideNode(el);
+    parent = el.parentElement;
+    if (
+      parent &&
+      parent !== document.body &&
+      parent !== document.documentElement &&
+      !isProtected(parent) &&
+      !containsProtected(parent) &&
+      parent.childElementCount <= 3 &&
+      isFloatingAd(parent)
+    ) {
+      hideNode(parent);
+    }
+  }
+
+  function floatingHost(el) {
+    var hops = 0;
+    var style;
+    while (el && hops < 8) {
+      if (el === document.body || el === document.documentElement) return null;
+      if (isProtected(el) || isOurUi(el) || containsProtected(el)) return null;
+      if (window.getComputedStyle) {
+        style = window.getComputedStyle(el);
+        if (style && (style.position === "fixed" || style.position === "sticky")) {
+          return el;
+        }
+      }
+      el = el.parentElement;
+      hops += 1;
+    }
+    return null;
+  }
+
+  function sweepCornerHits() {
+    var points;
+    var p;
+    var stack;
+    var i;
+    var host;
+    if (!document.elementsFromPoint) return;
+    points = [
+      [window.innerWidth - 16, window.innerHeight - 16],
+      [window.innerWidth - 48, window.innerHeight - 48],
+      [window.innerWidth - 16, window.innerHeight - 120],
+      [window.innerWidth - 140, window.innerHeight - 16]
+    ];
+    for (p = 0; p < points.length; p++) {
+      try {
+        stack = document.elementsFromPoint(points[p][0], points[p][1]) || [];
+      } catch (e) {
+        stack = [];
+      }
+      for (i = 0; i < stack.length; i++) {
+        host = floatingHost(stack[i]);
+        if (host && isFloatingAd(host)) hideFloatingAdTree(host);
+      }
+    }
+  }
+
+  function sweepFloatingAds() {
+    var nodes = collectFloatCandidates();
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      if (isFloatingAd(nodes[i])) hideFloatingAdTree(nodes[i]);
+    }
+    sweepCornerHits();
+  }
+
+  function scheduleAdSweep() {
+    if (scheduleAdSweep.timer) return;
+    scheduleAdSweep.timer = window.setTimeout(function () {
+      scheduleAdSweep.timer = 0;
+      sweepFloatingAds();
+    }, 80);
+  }
+
+  function startFloatingAdWatch() {
+    if (startFloatingAdWatch.started) return;
+    startFloatingAdWatch.started = true;
+    var obs = new MutationObserver(scheduleAdSweep);
+    obs.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class", "id", "src", "hidden"]
+    });
+    window.setInterval(sweepFloatingAds, 1000);
+    sweepFloatingAds();
   }
 
   function hideKnownAds() {
@@ -657,6 +849,10 @@
       'iframe[src*="juicyads"]',
       'iframe[src*="myavlive"]',
       'iframe[src*="doubleclick"]',
+      'iframe[src*="inpage.push"]',
+      '[id*="tsyndicate"]',
+      '[class*="ts-inpage"]',
+      '[class*="inpage-push"]',
       'a[href*="go.myavlive.com"]',
       'a[href*="myavlive.com"]',
       'a[href*="//bit.ly/"]',
@@ -682,7 +878,7 @@
       }
     }
     hideDesktopSidebar();
-    hideCornerWidgets();
+    sweepFloatingAds();
     hideAdsBelowToolbar();
     stripPlayerOverlays();
   }
@@ -1019,6 +1215,7 @@
     disablePopHandlers();
     keepLandscapeControls();
     injectAdCss();
+    startFloatingAdWatch();
 
     var tries = 0;
     var timer = window.setInterval(function () {
@@ -1053,6 +1250,7 @@
   installClickGuard();
   disablePopHandlers();
   injectAdCss();
+  startFloatingAdWatch();
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", startDomWork);
