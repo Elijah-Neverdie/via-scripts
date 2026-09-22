@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.4.6
-// @description  单击开关控制条，双击快进快退，左右滑动调节亮度音量，长按拖动预览进度
+// @version      1.4.7
+// @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -358,8 +358,8 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 11) return;
-    window.__viaMissavGestureHook = 11;
+    if (window.__viaMissavGestureHook === 12) return;
+    window.__viaMissavGestureHook = 12;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -377,7 +377,11 @@
     var seekTimer = 0;
     var sideTimer = 0;
     var inlineArea = 0;
-    var brightLevel = 50;
+    var brightRaw = 128;
+    var brightMax = 255;
+    var brightSentAt = 0;
+    var brightTimer = 0;
+    var BRIGHT_URL = "http://127.0.0.1:27182/via-missav-bright";
     var slide = null;
     var longTimer = 0;
     var skipTap = 0;
@@ -610,7 +614,7 @@
         "#via-missav-hud .via-level b{display:block;font-weight:400;margin-top:6px;}" +
         "#via-missav-hud .via-scrub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:none;text-align:center;pointer-events:none;}" +
         "#via-missav-hud .via-scrub.on{display:block;}" +
-        "#via-missav-hud .via-pip{margin:0 auto;background:#000 center no-repeat;}" +
+        "#via-missav-hud .via-pip{display:none!important;}" +
         "#via-missav-hud .via-scrub-time{margin-top:8px;color:#fff;font-weight:400;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.65);}" +
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
@@ -806,7 +810,7 @@
         wrap.insertAdjacentHTML(
           "beforeend",
           '<div class="via-level left"></div><div class="via-level right"></div>' +
-            '<div class="via-scrub"><div class="via-pip"></div><div class="via-scrub-time"></div></div>'
+            '<div class="via-scrub"><div class="via-scrub-time"></div></div>'
         );
       }
       flash = wrap.querySelector(".via-flash");
@@ -1332,40 +1336,54 @@
       return pad(m) + ":" + pad(sec);
     }
 
-    function applyBright() {
+    function clearVeil() {
       var veil = document.getElementById("via-missav-veil");
-      var mount = fsNode() || document.body || document.documentElement;
-      var rect;
-      var level = brightLevel;
-      var dark;
-      if (!isWatchPage()) {
-        if (veil) veil.style.display = "none";
+      if (veil && veil.parentNode) veil.parentNode.removeChild(veil);
+    }
+
+    function brightPercent(raw) {
+      return Math.max(0, Math.min(100, Math.round((raw / brightMax) * 100)));
+    }
+
+    function readSystemBright() {
+      fetch(BRIGHT_URL, { cache: "no-store" })
+        .then(function (response) {
+          return response.text();
+        })
+        .then(function (text) {
+          var n = parseInt(String(text).trim(), 10);
+          if (!isFinite(n)) return;
+          if (slide && slide.mode === "bright") return;
+          brightRaw = Math.max(1, Math.min(brightMax, n));
+        })
+        .catch(function () {});
+    }
+
+    function writeSystemBright(raw, force) {
+      raw = Math.max(1, Math.min(brightMax, Math.round(raw)));
+      brightRaw = raw;
+      if (!force && brightTimer) {
+        if (slide) slide.pendingBright = raw;
         return;
       }
-      if (!veil) {
-        veil = document.createElement("div");
-        veil.id = "via-missav-veil";
-        veil.setAttribute("data-via-missav-keep", "1");
+      if (brightTimer) {
+        window.clearTimeout(brightTimer);
+        brightTimer = 0;
       }
-      if (mount && veil.parentElement !== mount) mount.appendChild(veil);
-      if (Math.abs(level - 50) < 1) {
-        veil.style.display = "none";
-        return;
+      function send() {
+        var value = raw;
+        brightTimer = 0;
+        brightSentAt = Date.now();
+        if (slide && slide.pendingBright != null) {
+          value = slide.pendingBright;
+          slide.pendingBright = null;
+        }
+        brightRaw = value;
+        fetch(BRIGHT_URL + "?v=" + value, { cache: "no-store" }).catch(function () {});
       }
-      rect = boxRect();
-      dark = level < 50;
-      veil.style.position = "fixed";
-      veil.style.left = (rect.left || 0) + "px";
-      veil.style.top = (rect.top || 0) + "px";
-      veil.style.width = (rect.width || 0) + "px";
-      veil.style.height = (rect.height || 0) + "px";
-      veil.style.pointerEvents = "none";
-      veil.style.zIndex = "2147483000";
-      veil.style.display = "block";
-      veil.style.background = dark ? "#000" : "#fff";
-      veil.style.opacity = dark
-        ? String(((50 - level) / 50) * 0.72)
-        : String(((level - 50) / 50) * 0.42);
+      var wait = force ? 0 : Math.max(0, 90 - (Date.now() - brightSentAt));
+      if (wait <= 0) send();
+      else brightTimer = window.setTimeout(send, wait);
     }
 
     function showLevel(side, label, pct) {
@@ -1650,20 +1668,16 @@
     function showScrub(time) {
       var wrap = ensureOverlay();
       var scrub;
-      var pip;
       var label;
       var rect;
-      var viewW;
       var scale = 1;
       var area;
       if (!wrap) return;
       pinHud(wrap);
       scrub = wrap.querySelector(".via-scrub");
-      pip = wrap.querySelector(".via-pip");
       label = wrap.querySelector(".via-scrub-time");
-      if (!scrub || !pip || !label) return;
+      if (!scrub || !label) return;
       rect = boxRect();
-      viewW = Math.max(140, Math.round((rect.width || 320) * 0.42));
       if (fsNode() && inlineArea) {
         area = (rect.width || 1) * (rect.height || 1);
         scale = Math.sqrt(area / inlineArea);
@@ -1672,7 +1686,6 @@
       }
       label.style.fontSize = titlePx() * scale + "px";
       label.textContent = formatClock(time);
-      paintThumb(pip, cueAt(time), viewW);
       scrub.classList.add("on");
     }
 
@@ -1702,7 +1715,6 @@
         pending = 0;
       }
       skipTap = Date.now() + 1200;
-      loadThumbCues();
       showScrub(slide.baseTime);
     }
 
@@ -1713,9 +1725,8 @@
       var vol;
       if (!slide) return;
       if (slide.mode === "bright") {
-        brightLevel = Math.max(0, Math.min(100, slide.bright0 + ratio * 100));
-        applyBright();
-        showLevel("left", "亮度", Math.round(brightLevel));
+        writeSystemBright(slide.bright0 + ratio * brightMax, false);
+        showLevel("left", "亮度", brightPercent(brightRaw));
         return;
       }
       if (slide.mode === "vol") {
@@ -1755,14 +1766,13 @@
         y: p.y,
         mode: "",
         moved: false,
-        bright0: brightLevel,
+        bright0: brightRaw,
         vol0: video ? (video.muted ? 0 : typeof video.volume === "number" ? video.volume : 1) : 1,
         baseTime: mediaTime(),
         time: mediaTime()
       };
       clearLong();
       longTimer = window.setTimeout(enterScrub, 500);
-      loadThumbCues();
       if (event.cancelable) event.preventDefault();
     }
 
@@ -1813,6 +1823,9 @@
         }
         if (event.cancelable) event.preventDefault();
         event.stopPropagation();
+      }
+      if (mode === "bright") {
+        writeSystemBright(slide && slide.pendingBright != null ? slide.pendingBright : brightRaw, true);
       }
       if (mode === "scrub") {
         hideScrub();
@@ -1865,7 +1878,8 @@
       }
     }
 
-    hookNet();
+    clearVeil();
+    readSystemBright();
     injectStyle();
     removeLegacyLayer();
     document.addEventListener("touchstart", onGestureStart, { capture: true, passive: false });
@@ -1930,12 +1944,8 @@
       }
       paintControls(uiShown);
       armDownloads();
-      scanResources();
-      applyBright();
-      if (!thumbCues) {
-        thumbCues = adoptPlyrThumbs();
-        if (!thumbCues) loadThumbCues();
-      }
+      clearVeil();
+      if (!(slide && slide.mode === "bright")) readSystemBright();
       var touchHost = videoHost();
       if (touchHost && touchHost.style) touchHost.style.touchAction = "none";
     }, 800);
@@ -1943,10 +1953,10 @@
 
   function injectPageGestureHook() {
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "11") {
+      if (document.documentElement.getAttribute("data-via-missav-gesture") === "12") {
         return;
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "11");
+      document.documentElement.setAttribute("data-via-missav-gesture", "12");
       var script = document.createElement("script");
       script.textContent = "(" + pageGestureHook.toString() + ")();";
       document.documentElement.appendChild(script);
