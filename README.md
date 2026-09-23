@@ -1,6 +1,8 @@
 # MissAV Via 辅助
 
-给 [Via](https://via-app.cn/) 用的 MissAV 用户脚本，当前版本 **1.5.0**。
+给 [Via](https://via-app.cn/) 用的 MissAV 用户脚本，当前版本 **1.5.1**。
+
+iOS 上的播放手势直接在当前页面里运行。左滑系统亮度和右滑系统音量仍只在安卓本机服务可用时生效。
 
 匹配 `missav.ai`、`missav.com`、`missav.ws`、`missav.live`、`thisav.com` 及其子域名。
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.5.0
+// @version      1.5.1
 // @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
@@ -249,17 +249,52 @@
     }, 600);
   }
 
-  function injectPageOpenHook() {
+  function pageScriptNonce() {
+    var nodes;
+    var i;
+    var nonce;
     try {
-      if (document.documentElement.getAttribute("data-via-missav-hooked") === "1") {
-        return;
+      nodes = document.querySelectorAll("script[nonce]");
+    } catch (e) {
+      return "";
+    }
+    for (i = 0; i < nodes.length; i++) {
+      nonce = nodes[i].nonce || nodes[i].getAttribute("nonce") || "";
+      if (nonce) return nonce;
+    }
+    return "";
+  }
+
+  function injectInlineScript(code) {
+    var parent = document.documentElement || document.head;
+    var script;
+    var nonce;
+    if (!parent) return;
+    nonce = pageScriptNonce();
+    script = document.createElement("script");
+    if (nonce) {
+      script.setAttribute("nonce", nonce);
+      try {
+        script.nonce = nonce;
+      } catch (e) {}
+    }
+    script.textContent = code;
+    parent.appendChild(script);
+    if (script.parentNode) script.parentNode.removeChild(script);
+  }
+
+  function injectPageOpenHook() {
+    var root = document.documentElement;
+    if (!root) return;
+    try {
+      if (root.getAttribute("data-via-missav-hooked") !== "1") {
+        root.setAttribute("data-via-missav-hooked", "1");
+        injectInlineScript("(" + pageOpenHook.toString() + ")();");
       }
-      document.documentElement.setAttribute("data-via-missav-hooked", "1");
-      var script = document.createElement("script");
-      script.textContent = "(" + pageOpenHook.toString() + ")();";
-      document.documentElement.appendChild(script);
-      if (script.parentNode) script.parentNode.removeChild(script);
     } catch (e) {}
+    try {
+      pageOpenHook();
+    } catch (e2) {}
   }
 
   function installOpenHook() {
@@ -358,8 +393,11 @@
   }
 
   function pageGestureHook() {
-    if (window.__viaMissavGestureHook === 16) return;
-    window.__viaMissavGestureHook = 16;
+    var root = document.documentElement;
+    if (root && root.getAttribute("data-via-missav-gesture-live") === "17") return;
+    if (root) root.setAttribute("data-via-missav-gesture-live", "17");
+    if (window.__viaMissavGestureHook === 17) return;
+    window.__viaMissavGestureHook = 17;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -2187,16 +2225,19 @@
   }
 
   function injectPageGestureHook() {
+    var root = document.documentElement;
+    if (!root) return;
+    if (root.getAttribute("data-via-missav-gesture-live") === "17") return;
     try {
-      if (document.documentElement.getAttribute("data-via-missav-gesture") === "16") {
-        return;
+      if (root.getAttribute("data-via-missav-gesture") !== "17") {
+        root.setAttribute("data-via-missav-gesture", "17");
+        injectInlineScript("(" + pageGestureHook.toString() + ")();");
       }
-      document.documentElement.setAttribute("data-via-missav-gesture", "16");
-      var script = document.createElement("script");
-      script.textContent = "(" + pageGestureHook.toString() + ")();";
-      document.documentElement.appendChild(script);
-      if (script.parentNode) script.parentNode.removeChild(script);
     } catch (e) {}
+    try {
+      if (root.getAttribute("data-via-missav-gesture-live") === "17") return;
+      pageGestureHook();
+    } catch (e2) {}
   }
 
   function hasPopHandler(node) {
