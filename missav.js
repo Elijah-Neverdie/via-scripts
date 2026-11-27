@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.5.1
-// @description  单击开关控制条，双击快进快退，左滑调节系统亮度，右滑调节系统音量，长按拖动进度
+// @version      1.9.0
+// @description  单击开关控制条，双击快进快退，左右拖动调整进度，左滑调节系统亮度，右滑调节系统音量，长按拖动进度，左上角显示网速和视频真实分辨率，下载按钮左侧可上拉切换清晰度，“BTSOW”按钮搜索番号，视频下方“下载”弹出磁力下载列表
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -129,7 +129,7 @@
   toast.timer = 0;
 
   function tryPlay() {
-    var v = document.querySelector("video.player, #player video, video");
+    var v = document.querySelector("video.player") || document.querySelector("#player video") || document.querySelector("video:not(.preview)");
     if (v && v.paused) {
       var maybe = v.play();
       if (maybe && maybe.catch) maybe.catch(function () {});
@@ -223,7 +223,7 @@
           window.player.play();
         }
       } catch (e3) {}
-      var v = document.querySelector("video.player, video");
+      var v = document.querySelector("video.player") || document.querySelector("video:not(.preview)");
       if (v && v.paused && v.play) {
         var maybe = v.play();
         if (maybe && maybe.catch) maybe.catch(function () {});
@@ -394,10 +394,10 @@
 
   function pageGestureHook() {
     var root = document.documentElement;
-    if (root && root.getAttribute("data-via-missav-gesture-live") === "17") return;
-    if (root) root.setAttribute("data-via-missav-gesture-live", "17");
-    if (window.__viaMissavGestureHook === 17) return;
-    window.__viaMissavGestureHook = 17;
+    if (root && root.getAttribute("data-via-missav-gesture-live") === "21") return;
+    if (root) root.setAttribute("data-via-missav-gesture-live", "21");
+    if (window.__viaMissavGestureHook === 21) return;
+    window.__viaMissavGestureHook = 21;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -426,6 +426,17 @@
     var volTimer = 0;
     var VOL_URL = "http://127.0.0.1:27182/via-missav-vol";
     var slide = null;
+    var seekAcc = 0;
+    var seekBase = 0;
+    var seekCommitTimer = 0;
+    var scrubSeekAt = 0;
+    var scrubSeekTimer = 0;
+    var scrubSeekTime = null;
+    var sysBusy = { bright: false, vol: false };
+    var sysNext = { bright: null, vol: null };
+    var sysFails = { bright: 0, vol: 0 };
+    var sysWarnAt = 0;
+    var sysReadAt = 0;
     var longTimer = 0;
     var skipTap = 0;
     var thumbCues = null;
@@ -433,8 +444,15 @@
     var thumbKey = "";
     var thumbSheets = {};
 
+    /* 页面里推荐卡片有一堆隐藏的预览 video，而且排在主播放器前面，必须明确选主视频 */
     function videoEl() {
-      return document.querySelector("video.player, #player video, .plyr video, video");
+      return (
+        document.querySelector("video.player") ||
+        document.querySelector("#player video") ||
+        document.querySelector(".plyr video") ||
+        document.querySelector("video:not(.preview)") ||
+        document.querySelector("video")
+      );
     }
 
     function playerRoot() {
@@ -472,7 +490,7 @@
       if (overlaidVisible(node)) return true;
       return Boolean(
         node.closest(
-          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-seekbar"
+          ".plyr__controls,.plyr__menu,.plyr__progress,[data-via-missav-controls],#via-missav-extra-btn,#via-missav-seekbar,#via-missav-stats,#via-missav-quality-btn,#via-missav-quality"
         )
       );
     }
@@ -677,15 +695,7 @@
     }
 
     function seekBy(delta) {
-      var player = window.player;
-      var video = videoEl();
-      if (player && typeof player.currentTime === "number") {
-        player.currentTime = clampTime(player.currentTime + delta, player.duration);
-        return;
-      }
-      if (video) {
-        video.currentTime = clampTime((video.currentTime || 0) + delta, video.duration);
-      }
+      queueSeek(delta);
     }
 
     function playNow() {
@@ -767,6 +777,37 @@
         "#via-missav-hud .via-scrub-time{margin-top:8px;color:#fff;font-weight:400;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.65);}" +
         "#via-missav-hud .via-flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:100%;background:rgba(0,0,0,.58);color:#fff;display:none;align-items:center;justify-content:center;}" +
         "#via-missav-hud .via-flash.on{display:flex;animation:via-play-pulse .4s ease;}" +
+        "#via-missav-stats{position:fixed;left:0;top:0;width:0;height:0;z-index:2147482999;pointer-events:none;overflow:visible;display:none;}" +
+        "#via-missav-stats.via-stats-on{display:block;}" +
+        "#via-missav-stats .via-stats-box{position:absolute;left:0;top:0;padding:.34em .58em;display:flex;flex-direction:column;align-items:flex-start;" +
+        "font-weight:400;line-height:1.2;text-align:left;letter-spacing:0;color:#ffd21e;" +
+        "text-shadow:0 1px 2px rgba(0,0,0,.95),0 0 4px rgba(0,0,0,.85),0 0 10px rgba(0,0,0,.6);}" +
+        "#via-missav-stats .via-stats-line{white-space:nowrap;}" +
+        "#via-missav-stats .via-stat-quality{opacity:.92;margin-top:.06em;}" +
+        "#via-missav-quality-btn{display:flex;align-items:center;justify-content:center;}" +
+        "#via-missav-quality-btn svg{width:18px;height:18px;display:block;}" +
+        "#via-missav-quality{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483100;pointer-events:none;overflow:visible;" +
+        "visibility:hidden;transition:visibility 0s linear .24s;}" +
+        "#via-missav-quality.via-q-open{visibility:visible;transition-delay:0s;}" +
+        "#via-missav-quality .via-q-backdrop{position:absolute;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.38);" +
+        "opacity:0;transition:opacity .2s ease;pointer-events:none;}" +
+        "#via-missav-quality.via-q-open .via-q-backdrop{opacity:1;pointer-events:auto;}" +
+        "#via-missav-quality .via-q-sheet{position:absolute;left:0;right:0;bottom:0;max-height:74%;overflow-y:auto;" +
+        "-webkit-overflow-scrolling:touch;box-sizing:border-box;padding:.35em 0 .45em;background:rgba(18,18,18,.96);" +
+        "border-radius:12px 12px 0 0;box-shadow:0 -6px 22px rgba(0,0,0,.45);color:#fff;line-height:1.25;" +
+        "transform:translateY(103%);transition:transform .22s ease;pointer-events:none;will-change:transform;}" +
+        "#via-missav-quality.via-q-open .via-q-sheet{transform:translateY(0);pointer-events:auto;}" +
+        "#via-missav-quality .via-q-head{position:relative;padding:.1em .95em .3em;user-select:none;-webkit-user-select:none;touch-action:none;}" +
+        "#via-missav-quality .via-q-grab{display:block;width:2.4em;height:.26em;margin:0 auto .42em;border-radius:99px;background:rgba(255,255,255,.3);}" +
+        "#via-missav-quality .via-q-title{display:block;font-size:.82em;color:rgba(255,255,255,.62);}" +
+        "#via-missav-quality .via-q-list{display:flex;flex-direction:column;}" +
+        "#via-missav-quality .via-q-item{appearance:none;-webkit-appearance:none;display:flex;align-items:center;" +
+        "justify-content:space-between;gap:.8em;width:100%;box-sizing:border-box;margin:0;padding:.66em 1em;" +
+        "background:transparent;border:0;color:#fff;font:inherit;text-align:left;line-height:1.25;}" +
+        "#via-missav-quality .via-q-item:active{background:rgba(255,255,255,.07);}" +
+        "#via-missav-quality .via-q-item.on{color:#ffd21e;}" +
+        "#via-missav-quality .via-q-mark{font-size:.9em;opacity:0;}" +
+        "#via-missav-quality .via-q-item.on .via-q-mark{opacity:1;}" +
         "#via-missav-seekbar{position:absolute;left:0;right:0;bottom:52px;z-index:6;display:none;justify-content:space-between;align-items:center;padding:0 8px 4px;pointer-events:auto;color:#fff;}" +
         ".plyr.via-ui-on #via-missav-seekbar,.plyr:not(.plyr--hide-controls) #via-missav-seekbar{display:flex!important;}" +
         "#via-missav-seekbar .via-seek-group{display:flex;align-items:center;gap:2px;}" +
@@ -1048,6 +1089,1136 @@
       if (flash && !flash.innerHTML) flash.innerHTML = playSvg();
       if (host) ensureSeekBar(host);
       return wrap;
+    }
+
+    /* ---- 画面左上角：实时网速 + 当前清晰度 ---- */
+
+    var STAT_WINDOW = 1500;
+    var statSamples = [];
+    var statSawBytes = false;
+    var statNetHooked = false;
+    var statQualityCache = "";
+    var statQualityAt = 0;
+    var statEchoCache = "";
+    var statEchoAt = 0;
+    var statTimer = 0;
+
+    function statAdd(bytes) {
+      var now;
+      var cut;
+      var i;
+      if (!(bytes > 0)) return;
+      statSawBytes = true;
+      now = Date.now();
+      statSamples.push({ t: now, n: bytes });
+      if (statSamples.length > 800) statSamples.splice(0, statSamples.length - 800);
+      cut = 0;
+      for (i = 0; i < statSamples.length; i++) {
+        if (now - statSamples[i].t <= STAT_WINDOW) break;
+        cut = i + 1;
+      }
+      if (cut > 0) statSamples.splice(0, cut);
+    }
+
+    function statRate() {
+      var now = Date.now();
+      var total = 0;
+      var i;
+      var sample;
+      var span;
+      var first = -1;
+      for (i = 0; i < statSamples.length; i++) {
+        sample = statSamples[i];
+        if (now - sample.t > STAT_WINDOW) continue;
+        if (first < 0) first = sample.t;
+        total += sample.n;
+      }
+      if (total <= 0 || first < 0) return 0;
+      span = now - first;
+      if (span < 600) span = 600;
+      if (span > STAT_WINDOW) span = STAT_WINDOW;
+      return total / (span / 1000);
+    }
+
+    function statFormat(rate) {
+      var kb;
+      var mb;
+      if (!(rate > 0) || !isFinite(rate)) return "0 B/s";
+      mb = rate / 1048576;
+      if (mb >= 1) return (mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)) + " MB/s";
+      kb = rate / 1024;
+      if (kb >= 1) return (kb >= 100 ? kb.toFixed(0) : kb.toFixed(1)) + " KB/s";
+      return Math.round(rate) + " B/s";
+    }
+
+    function statBandwidth() {
+      var hls = hlsOf();
+      var est;
+      if (!hls) return 0;
+      try {
+        est = hls.bandwidthEstimate;
+      } catch (e) {
+        est = 0;
+      }
+      if (!(est > 0)) return 0;
+      return est / 8;
+    }
+
+    function statSpeedText() {
+      var rate = statRate();
+      if (!rate && !statSawBytes) rate = statBandwidth();
+      return statFormat(rate);
+    }
+
+    function statHookNet() {
+      var proto;
+      var origOpen;
+      var origSend;
+      var origFetch;
+      if (statNetHooked) return;
+      statNetHooked = true;
+      try {
+        proto = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+        if (proto && typeof proto.send === "function" && typeof proto.open === "function") {
+          origOpen = proto.open;
+          origSend = proto.send;
+          proto.open = function () {
+            try {
+              this.__viaStatLoaded = 0;
+            } catch (e) {}
+            return origOpen.apply(this, arguments);
+          };
+          proto.send = function () {
+            var xhr = this;
+            try {
+              xhr.addEventListener("progress", function (event) {
+                var loaded = (event && event.loaded) || 0;
+                var prev = xhr.__viaStatLoaded || 0;
+                if (loaded > prev) {
+                  xhr.__viaStatLoaded = loaded;
+                  statAdd(loaded - prev);
+                }
+              });
+              xhr.addEventListener("load", function () {
+                var size = 0;
+                var prev = xhr.__viaStatLoaded || 0;
+                try {
+                  if (xhr.response && xhr.response.byteLength) size = xhr.response.byteLength;
+                  else if (xhr.response && xhr.response.size) size = xhr.response.size;
+                } catch (e1) {
+                  size = 0;
+                }
+                if (size > prev) {
+                  xhr.__viaStatLoaded = size;
+                  statAdd(size - prev);
+                }
+              });
+            } catch (e2) {}
+            return origSend.apply(this, arguments);
+          };
+        }
+      } catch (e3) {}
+      try {
+        if (typeof window.fetch === "function") {
+          origFetch = window.fetch;
+          window.fetch = function (input) {
+            var url = typeof input === "string" ? input : (input && input.url) || "";
+            var call = origFetch.apply(this, arguments);
+            if (!/\.(ts|m4s|mp4|m4v|m4a|aac)(\?|#|$)/i.test(url)) return call;
+            return call.then(function (response) {
+              try {
+                if (
+                  response &&
+                  typeof response.clone === "function" &&
+                  response.body &&
+                  typeof response.body.getReader === "function"
+                ) {
+                  var reader = response.clone().body.getReader();
+                  var pump = function () {
+                    reader.read().then(function (chunk) {
+                      if (chunk && !chunk.done) {
+                        if (chunk.value && chunk.value.byteLength) statAdd(chunk.value.byteLength);
+                        pump();
+                      }
+                    }, function () {});
+                  };
+                  pump();
+                }
+              } catch (e) {}
+              return response;
+            });
+          };
+        }
+      } catch (e4) {}
+    }
+
+    function statQualityLabel(raw) {
+      var text = String(raw || "").replace(/\s+/g, " ").trim();
+      var match;
+      if (!text || text.length > 12) return "";
+      if (/^(自动|自動|auto)$/i.test(text)) return "自动";
+      match = /^(\d{3,4})\s*[pP]$/.exec(text);
+      if (match) return match[1] + "P";
+      return "";
+    }
+
+    /* 站点常用的文字档位（原画/高清/标清…）：只作为可点击选项，不参与 hls 层级映射 */
+    function statQualityAlias(raw) {
+      var text = String(raw || "").replace(/\s+/g, " ").trim();
+      var direct = statQualityLabel(text);
+      if (direct) return direct;
+      if (!text || text.length > 14) return "";
+      if (/^(4k|uhd|2160p)$/i.test(text)) return "4K";
+      if (/^(2k|qhd|1440p)$/i.test(text)) return "2K";
+      if (/^(fhd|全高清)$/i.test(text)) return "FHD";
+      if (/^(hd|高清|高清版|超清)$/i.test(text)) return "高清";
+      if (/^(sd|标清)$/i.test(text)) return "标清";
+      if (/^(流畅|流暢|ld)$/i.test(text)) return "流畅";
+      if (/^(原画|原畫|蓝光|藍光|blu-?ray|original)$/i.test(text)) return "原画";
+      return "";
+    }
+
+    function statChosen(node) {
+      var el = node;
+      var hops = 0;
+      var attr;
+      var cls;
+      var sel;
+      while (el && hops < 3) {
+        if (el.tagName === "OPTION") {
+          if (el.selected === true) return true;
+          sel = el.parentElement;
+          if (sel && sel.selectedIndex >= 0 && sel.options && sel.options[sel.selectedIndex] === el) return true;
+        }
+        if (el.getAttribute) {
+          attr =
+            el.getAttribute("aria-checked") ||
+            el.getAttribute("aria-selected") ||
+            el.getAttribute("aria-current") ||
+            el.getAttribute("data-active");
+          if (attr === "true") return true;
+        }
+        cls = el.className && el.className.toString ? el.className.toString() : "";
+        if (!cls && el.getAttribute) cls = el.getAttribute("class") || "";
+        if (/(^|[\s_-])(active|selected|current|checked|is-active|is-selected)([\s_-]|$)/i.test(cls)) return true;
+        el = el.parentElement;
+        hops += 1;
+      }
+      return false;
+    }
+
+    /* 自己注入的元素永不参与识别 */
+    function statOwnNode(node) {
+      var el = node;
+      var hops = 0;
+      var id;
+      while (el && hops < 6) {
+        id = el.id || (el.getAttribute ? el.getAttribute("id") : "") || "";
+        if (String(id).indexOf("via-missav") === 0) return true;
+        if (el.closest && el.closest("#via-missav-quality,#via-missav-quality-btn,#via-missav-stats")) return true;
+        el = el.parentElement;
+        hops += 1;
+      }
+      return false;
+    }
+
+    function statLabelOf(el) {
+      var label = statQualityAlias(el.textContent);
+      if (label) return label;
+      if (el.tagName === "INPUT") {
+        label = statQualityAlias(el.value);
+        if (label) return label;
+        if (el.parentElement) return statQualityAlias(el.parentElement.textContent);
+      }
+      return "";
+    }
+
+    function statQualityScopes() {
+      var scopes = [];
+      var menus;
+      var i;
+      var root = plyrEl() || playerRoot();
+      if (root) scopes.push(root);
+      try {
+        menus = document.querySelectorAll(
+          '[class*="quality"],[class*="resolution"],[class*="清晰"],[class*="畫質"],[class*="画质"],' +
+            '[class*="setting"],[class*="menu"],[id*="quality"],[id*="resolution"]'
+        );
+        for (i = 0; i < menus.length && scopes.length < 12; i++) {
+          if (statOwnNode(menus[i])) continue;
+          scopes.push(menus[i]);
+        }
+      } catch (e) {}
+      return scopes;
+    }
+
+    /*
+     * 只认「同一个父节点下至少两个档位」的候选列表。
+     * 设置面板里那一行当前值回显（例如齿轮菜单主面板上的 “360P”）是孤立节点，
+     * 会在这里被排除，避免把回显当成完整菜单。
+     */
+    function statQualityListOf(scope) {
+      var groups = [];
+      var nodes;
+      var out = [];
+      var i;
+      var g;
+      var node;
+      var parent;
+      var label;
+      var group;
+      var entry;
+      var best = null;
+      if (!scope || !scope.querySelectorAll) return out;
+      try {
+        nodes = scope.querySelectorAll(
+          "button, li, a, option, input, [role='option'], [role='menuitem'], [role='menuitemradio'], [role='radio']"
+        );
+      } catch (e) {
+        return out;
+      }
+      for (i = 0; i < nodes.length; i++) {
+        node = nodes[i];
+        if (statOwnNode(node)) continue;
+        label = statLabelOf(node);
+        if (!label) continue;
+        parent = node.parentElement;
+        if (!parent) continue;
+        group = null;
+        for (g = 0; g < groups.length; g++) {
+          if (groups[g].parent === parent) {
+            group = groups[g];
+            break;
+          }
+        }
+        if (!group) {
+          group = { parent: parent, items: [], seen: {} };
+          groups.push(group);
+        }
+        if (group.seen[label]) {
+          if (statChosen(node)) group.seen[label].chosen = true;
+          continue;
+        }
+        entry = { label: label, node: node, chosen: statChosen(node) };
+        group.seen[label] = entry;
+        group.items.push(entry);
+      }
+      for (i = 0; i < groups.length; i++) {
+        if (groups[i].items.length < 2) continue;
+        if (!best || groups[i].items.length > best.items.length) best = groups[i];
+      }
+      return best ? best.items : out;
+    }
+
+    function statQualityMenu() {
+      var scopes = statQualityScopes();
+      var best = null;
+      var bestScore = -1;
+      var list;
+      var score;
+      var i;
+      var j;
+      for (i = 0; i < scopes.length; i++) {
+        list = statQualityListOf(scopes[i]);
+        if (list.length < 2) continue;
+        score = list.length;
+        for (j = 0; j < list.length; j++) {
+          if (list[j].chosen) {
+            score += 100;
+            break;
+          }
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = list;
+        }
+      }
+      return best || [];
+    }
+
+    /* 站点自己的「当前清晰度」文字提示（低优先级，只在拿不到真实层级时兜底） */
+    function statQualityEcho() {
+      var scope = plyrEl() || playerRoot();
+      var nodes;
+      var row;
+      var val;
+      var i;
+      if (!scope || !scope.querySelectorAll) return "";
+      try {
+        nodes = scope.querySelectorAll(".plyr__menu__value");
+        for (i = 0; i < nodes.length; i++) {
+          row = nodes[i].parentElement;
+          while (row && row !== scope) {
+            if (row.getAttribute && row.getAttribute("data-plyr-menu")) break;
+            row = row.parentElement;
+          }
+          if (row && row !== scope && !/清晰|畫質|画质|quality|解像|分辨率|resolution/i.test(row.textContent || "")) {
+            continue;
+          }
+          val = statQualityLabel(nodes[i].textContent);
+          if (val) return val;
+        }
+        nodes = scope.querySelectorAll("select");
+        for (i = 0; i < nodes.length; i++) {
+          if (!nodes[i].options || nodes[i].selectedIndex < 0) continue;
+          val = statQualityLabel(nodes[i].options[nodes[i].selectedIndex].textContent || "");
+          if (val) return val;
+        }
+      } catch (e) {}
+      return "";
+    }
+
+    function statQualityFromDom() {
+      var chosen = statQualityMenuChosen();
+      if (chosen) return chosen;
+      return statQualityEcho();
+    }
+
+    /* 站点菜单里明确标出的选中项（只在真的是「一个档位列表」时才认） */
+    function statQualityMenuChosen() {
+      var menu = statQualityMenu();
+      var i;
+      for (i = 0; i < menu.length; i++) {
+        if (menu[i].chosen) return menu[i].label;
+      }
+      return "";
+    }
+
+    /* Plyr 自带 quality 配置：齿轮里那些「hls 层级里没有」的档位通常来自这里 */
+    function statPlyrLevels() {
+      var player = window.player;
+      var cfg = player && player.options ? player.options.quality : null;
+      var options = cfg && cfg.options;
+      var out = [];
+      var i;
+      var value;
+      if (!options || !options.length) return out;
+      for (i = 0; i < options.length; i++) {
+        value = parseInt(options[i], 10);
+        if (!(value > 0)) continue;
+        out.push(value);
+      }
+      return out;
+    }
+
+    function statPlyrQuality() {
+      var player = window.player;
+      var cur;
+      if (!statPlyrLevels().length || !player) return "";
+      cur = player.quality;
+      if (typeof cur !== "number" || !(cur > 0)) return "";
+      return cur + "P";
+    }
+
+    function statHeightOfLabel(label) {
+      var match = /^(\d{3,4})P$/.exec(label || "");
+      return match ? parseInt(match[1], 10) : 0;
+    }
+
+    function levelHeight(level) {
+      var height;
+      if (!level) return 0;
+      height = level.height || 0;
+      if (!height && level.attrs && level.attrs.RESOLUTION) {
+        height = parseInt(String(level.attrs.RESOLUTION).split("x")[1], 10) || 0;
+      }
+      return height;
+    }
+
+    function statPlaying() {
+      var hls = hlsOf();
+      var auto = false;
+      var index = -1;
+      var height = 0;
+      var video;
+      if (hls) {
+        try {
+          auto = hls.autoLevelEnabled === true;
+          index = hls.currentLevel;
+          if (!(index >= 0)) index = hls.loadLevel;
+          if (!(index >= 0)) index = hls.nextLevel;
+          if (index >= 0 && hls.levels && hls.levels[index]) height = levelHeight(hls.levels[index]);
+        } catch (e) {}
+      }
+      if (!height) {
+        video = videoEl();
+        if (video && video.videoHeight > 0) height = video.videoHeight;
+      }
+      return { auto: auto, height: height };
+    }
+
+    /* 左上角只显示画面真实解码高度（例如 928P）；还没有尺寸时才退回 hls 当前层级 */
+    function statQualityText() {
+      var video = videoEl();
+      var height;
+      if (qPick && qPick.video && video && video !== qPick.video) qPick = null;
+      height = video && video.videoHeight > 0 ? video.videoHeight : statPlaying().height;
+      return height > 0 ? height + "P" : "";
+    }
+
+    function ensureStats() {
+      var mount = hudMount();
+      var wrap;
+      if (!mount) return null;
+      wrap = document.getElementById("via-missav-stats");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.id = "via-missav-stats";
+        wrap.setAttribute("data-via-missav-keep", "1");
+        wrap.innerHTML =
+          '<div class="via-stats-box">' +
+          '<div class="via-stats-line via-stat-speed"></div>' +
+          '<div class="via-stats-line via-stat-quality"></div>' +
+          "</div>";
+        mount.appendChild(wrap);
+      } else if (wrap.parentElement !== mount) {
+        mount.appendChild(wrap);
+      }
+      return wrap;
+    }
+
+    function pictureBox() {
+      var picture = labelRect();
+      var rect;
+      var fs;
+      var scale = 1;
+      if (picture) {
+        rect = picture;
+      } else if (videoEl()) {
+        rect = boxRect();
+      } else {
+        rect = null;
+      }
+      if (!rect || !(rect.width > 0) || !(rect.height > 0)) return null;
+      if (!picture && rect.height > rect.width * 0.8) {
+        rect = {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: (rect.width * 9) / 16,
+          right: rect.left + rect.width,
+          bottom: rect.top + (rect.width * 9) / 16
+        };
+      }
+      fs = fsNode();
+      if (!fs && rect.width * rect.height >= 8000) inlineArea = rect.width * rect.height;
+      if (fs && inlineArea > 0) {
+        scale = Math.sqrt((rect.width * rect.height) / inlineArea);
+        if (scale < 1) scale = 1;
+        if (scale > 8) scale = 8;
+      }
+      return { rect: rect, scale: scale };
+    }
+
+    function pinBox(wrap, box) {
+      var origin;
+      if (!wrap || !box) return;
+      origin = fixedOrigin(wrap);
+      wrap.style.left = box.rect.left - origin.left + "px";
+      wrap.style.top = box.rect.top - origin.top + "px";
+      wrap.style.width = (box.rect.width || 0) + "px";
+      wrap.style.height = (box.rect.height || 0) + "px";
+    }
+
+    function pinnedFont(el, scale, ratio, minPx) {
+      var px;
+      if (!el) return;
+      px = Math.round(titlePx() * scale * ratio * 10) / 10;
+      if (px < minPx) px = minPx;
+      el.style.fontSize = px + "px";
+    }
+
+    function pinStats(wrap) {
+      var box;
+      var content;
+      if (!wrap) return;
+      box = pictureBox();
+      if (!box) {
+        wrap.classList.remove("via-stats-on");
+        return;
+      }
+      content = wrap.querySelector(".via-stats-box");
+      pinnedFont(content, box.scale, 0.78, 11);
+      pinBox(wrap, box);
+      wrap.classList.add("via-stats-on");
+    }
+
+    function paintStats() {
+      var wrap;
+      var speedEl;
+      var qualityEl;
+      var speed;
+      var quality;
+      if (!isWatchPage()) {
+        wrap = document.getElementById("via-missav-stats");
+        if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        statQualityCache = "";
+        qPick = null;
+        qMemoClear();
+        if (qOpen) closeQuality();
+        return;
+      }
+      wrap = ensureStats();
+      if (!wrap) return;
+      pinStats(wrap);
+      speed = statSpeedText();
+      quality = statQualityText() || "—";
+      speedEl = wrap.querySelector(".via-stat-speed");
+      qualityEl = wrap.querySelector(".via-stat-quality");
+      if (speedEl && speedEl.textContent !== speed) speedEl.textContent = speed;
+      if (qualityEl && qualityEl.textContent !== quality) qualityEl.textContent = quality;
+    }
+
+    /* ---- 下载按钮左侧：清晰度上拉栏 ---- */
+
+    var qOpen = false;
+    var qItems = [];
+    var qSig = "";
+    var qDrag = null;
+    var qSeen = false;
+    var qProbeAt = 0;
+    var qProbeCount = 0;
+    var qPick = null;
+    var qHarvested = false;
+    var qHarvestTries = 0;
+    var qSuppress = false;
+    var qMemoList = null;
+    var qMemoAt = 0;
+
+    function qEsc(text) {
+      return String(text === null || text === undefined ? "" : text).replace(/[&<>"']/g, function (ch) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+      });
+    }
+
+    function qIcon() {
+      return (
+        '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' +
+        '<rect x="2.9" y="5.6" width="18.2" height="12.8" rx="2.3" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+        '<text x="12" y="15.3" text-anchor="middle" font-size="7.6" font-weight="600" fill="currentColor">HD</text>' +
+        "</svg>"
+      );
+    }
+
+    function qLevels() {
+      var hls = hlsOf();
+      var out = [];
+      var i;
+      var height;
+      if (!hls || !hls.levels) return out;
+      try {
+        for (i = 0; i < hls.levels.length; i++) {
+          height = levelHeight(hls.levels[i]);
+          if (!height) continue;
+          out.push({ height: height, index: i });
+        }
+      } catch (e) {}
+      return out;
+    }
+
+    function qLevelOf(levels, height) {
+      var i;
+      for (i = 0; i < levels.length; i++) {
+        if (levels[i].height === height) return levels[i].index;
+      }
+      return -1;
+    }
+
+    function qMemoClear() {
+      qMemoAt = 0;
+      qMemoList = null;
+    }
+
+    /*
+     * 档位来源三合一：
+     *   1. hls 的全部层级（真实可播）
+     *   2. 站点菜单里真正能点的档位（同一父节点下 ≥2 项才算菜单）
+     *   3. Plyr 自带 quality 配置（齿轮里那些层级里没有的档位来自这里）
+     */
+    function qOptions() {
+      var now = Date.now();
+      var levels;
+      var menu;
+      var plyr;
+      var items = [];
+      var i;
+      var j;
+      var hit;
+      var rank;
+      var m;
+      var h;
+      if (qMemoList && now - qMemoAt < 500) return qMemoList;
+      levels = qLevels();
+      menu = statQualityMenu();
+      plyr = statPlyrLevels();
+      items.push({ label: "自动", height: 0, auto: true, level: -1, el: null });
+      for (i = 0; i < levels.length; i++) {
+        items.push({
+          label: levels[i].height + "P",
+          height: levels[i].height,
+          auto: false,
+          level: levels[i].index,
+          el: null
+        });
+      }
+      for (i = 0; i < menu.length; i++) {
+        m = menu[i];
+        if (m.label === "自动") {
+          if (m.node && !items[0].el) items[0].el = m.node;
+          continue;
+        }
+        h = statHeightOfLabel(m.label);
+        hit = -1;
+        if (h) {
+          for (j = 1; j < items.length; j++) {
+            if (items[j].height === h) {
+              hit = j;
+              break;
+            }
+          }
+        }
+        if (hit >= 0) {
+          items[hit].label = m.label;
+          if (m.node && !items[hit].el) items[hit].el = m.node;
+          continue;
+        }
+        if (!h && !m.node) continue;
+        items.push({ label: m.label, height: h, auto: false, level: -1, el: m.node || null });
+      }
+      for (i = 0; i < plyr.length; i++) {
+        hit = -1;
+        for (j = 1; j < items.length; j++) {
+          if (items[j].height === plyr[i]) {
+            hit = j;
+            break;
+          }
+        }
+        if (hit >= 0) continue;
+        items.push({
+          label: plyr[i] + "P",
+          height: plyr[i],
+          auto: false,
+          level: -1,
+          el: null,
+          plyr: plyr[i]
+        });
+      }
+      items.sort(function (a, b) {
+        if (a.auto) return -1;
+        if (b.auto) return 1;
+        rank = (a.height ? 2 : 1) - (b.height ? 2 : 1);
+        if (rank) return rank;
+        return b.height - a.height;
+      });
+      if (items.length < 2) items = [];
+      qMemoAt = now;
+      qMemoList = items;
+      return items;
+    }
+
+    function qAvailable() {
+      var now;
+      if (qSeen) return true;
+      now = Date.now();
+      if (now - qProbeAt >= 1000) {
+        qProbeAt = now;
+        qProbeCount = qOptions().length;
+        if (qProbeCount >= 2) qSeen = true;
+      }
+      return qSeen;
+    }
+
+    function qCurrentIndex(items) {
+      var dom;
+      var playing;
+      var i;
+      if (qPick) {
+        if (qPick.auto) return 0;
+        for (i = 0; i < items.length; i++) {
+          if (!items[i].auto && items[i].label === qPick.label) return i;
+        }
+        for (i = 0; i < items.length; i++) {
+          if (!items[i].auto && qPick.height && items[i].height === qPick.height) return i;
+        }
+      }
+      dom = statQualityFromDom();
+      playing = statPlaying();
+      if (dom) {
+        if (/^自动$/.test(dom)) return 0;
+        for (i = 0; i < items.length; i++) {
+          if (!items[i].auto && items[i].label === dom) return i;
+        }
+      }
+      if (playing.auto) return 0;
+      for (i = 0; i < items.length; i++) {
+        if (!items[i].auto && playing.height && items[i].height === playing.height) return i;
+      }
+      return -1;
+    }
+
+    function qSoftClick(el) {
+      if (!el) return false;
+      try {
+        if (typeof el.click === "function") {
+          el.click();
+          return true;
+        }
+      } catch (e) {}
+      try {
+        if (el.dispatchEvent && window.MouseEvent) {
+          el.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+          return true;
+        }
+      } catch (e2) {}
+      return false;
+    }
+
+    function qSetPlyrQuality(value, anyValue) {
+      var player = window.player;
+      var levels = statPlyrLevels();
+      var i;
+      var known = Boolean(anyValue);
+      if (!player || !levels.length) return false;
+      for (i = 0; i < levels.length; i++) {
+        if (levels[i] === value) known = true;
+      }
+      if (!known) return false;
+      try {
+        player.quality = value;
+        return true;
+      } catch (e) {}
+      return false;
+    }
+
+    function qApply(item) {
+      var hls = hlsOf();
+      var ok = false;
+      if (!item) return false;
+      if (item.auto) {
+        if (hls) {
+          try {
+            hls.currentLevel = -1;
+            ok = true;
+          } catch (e) {}
+        }
+        if (item.el && qSoftClick(item.el)) ok = true;
+        if (!ok && item.plyr !== undefined) ok = qSetPlyrQuality(item.plyr);
+        /* Plyr 的 quality 里 0 表示交给自适应 */
+        if (!ok) ok = qSetPlyrQuality(0, true);
+        return ok;
+      }
+      if (item.level >= 0 && hls) {
+        try {
+          hls.currentLevel = item.level;
+          ok = true;
+        } catch (e2) {}
+      }
+      if (item.el && qSoftClick(item.el)) ok = true;
+      if (!ok && item.plyr !== undefined) ok = qSetPlyrQuality(item.plyr);
+      return ok;
+    }
+
+    function qSheetEl() {
+      var wrap = document.getElementById("via-missav-quality");
+      return wrap ? wrap.querySelector(".via-q-sheet") : null;
+    }
+
+    function ensureQualitySheet() {
+      var mount;
+      var wrap;
+      var backdrop;
+      var head;
+      if (!isWatchPage()) return null;
+      mount = hudMount();
+      if (!mount) return null;
+      wrap = document.getElementById("via-missav-quality");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.id = "via-missav-quality";
+        wrap.setAttribute("data-via-missav-keep", "1");
+        wrap.innerHTML =
+          '<div class="via-q-backdrop"></div>' +
+          '<div class="via-q-sheet">' +
+          '<div class="via-q-head"><span class="via-q-grab"></span><span class="via-q-title">清晰度</span></div>' +
+          '<div class="via-q-list"></div>' +
+          "</div>";
+        backdrop = wrap.querySelector(".via-q-backdrop");
+        if (backdrop) bindPress(backdrop, closeQuality);
+        head = wrap.querySelector(".via-q-head");
+        if (head) {
+          head.addEventListener("touchstart", qDragStart, { capture: true, passive: true });
+          head.addEventListener("touchmove", qDragMove, { capture: true, passive: false });
+          head.addEventListener("touchend", qDragEnd, { capture: true, passive: true });
+          head.addEventListener("touchcancel", qDragEnd, { capture: true, passive: true });
+        }
+        mount.appendChild(wrap);
+      } else if (wrap.parentElement !== mount) {
+        mount.appendChild(wrap);
+      }
+      return wrap;
+    }
+
+    function renderQuality() {
+      var wrap = ensureQualitySheet();
+      var list;
+      var html = "";
+      var i;
+      var cur;
+      var buttons;
+      var active;
+      if (!wrap) return;
+      list = wrap.querySelector(".via-q-list");
+      if (!list) return;
+      qItems = qOptions();
+      cur = qCurrentIndex(qItems);
+      for (i = 0; i < qItems.length; i++) {
+        html +=
+          '<button type="button" class="via-q-item' +
+          (i === cur ? " on" : "") +
+          '" data-q="' +
+          i +
+          '"><span class="via-q-label">' +
+          qEsc(qItems[i].label) +
+          '</span><span class="via-q-mark">✓</span></button>';
+      }
+      if (html === qSig) return;
+      qSig = html;
+      list.innerHTML = html;
+      buttons = list.querySelectorAll("button");
+      for (i = 0; i < buttons.length; i++) {
+        bindPress(
+          buttons[i],
+          (function (index) {
+            return function () {
+              chooseQuality(index);
+            };
+          })(i)
+        );
+      }
+      active = list.querySelector(".via-q-item.on");
+      if (active && active.scrollIntoView) {
+        try {
+          active.scrollIntoView({ block: "nearest" });
+        } catch (e) {}
+      }
+    }
+
+    function pinQuality(wrap) {
+      var box;
+      var content;
+      if (!wrap || !qOpen) return;
+      box = pictureBox();
+      if (!box) return;
+      content = wrap.querySelector(".via-q-sheet");
+      pinnedFont(content, box.scale, 0.86, 13);
+      pinBox(wrap, box);
+    }
+
+    function openQuality() {
+      var wrap;
+      var btn;
+      var opts;
+      var fired;
+      if (!isWatchPage()) return;
+      opts = qOptions();
+      /* 档位太少时，先让播放器把自己的清晰度菜单生成出来再读一次 */
+      if (opts.length < 2 && !qHarvested) {
+        fired = maybeHarvest();
+        qMemoClear();
+        opts = qOptions();
+        if (opts.length < 2 && fired) {
+          downloadToast("正在读取清晰度，再点一次试试", false);
+          return;
+        }
+      }
+      if (opts.length < 2) {
+        downloadToast("这个视频没有可选清晰度", true);
+        return;
+      }
+      wrap = ensureQualitySheet();
+      if (!wrap) return;
+      renderQuality();
+      qOpen = true;
+      pinQuality(wrap);
+      wrap.classList.add("via-q-open");
+      btn = document.getElementById("via-missav-quality-btn");
+      if (btn) btn.setAttribute("aria-expanded", "true");
+      setUi(true);
+    }
+
+    function closeQuality() {
+      var wrap = document.getElementById("via-missav-quality");
+      var btn = document.getElementById("via-missav-quality-btn");
+      var sheet;
+      qOpen = false;
+      qDrag = null;
+      if (wrap) {
+        wrap.classList.remove("via-q-open");
+        sheet = wrap.querySelector(".via-q-sheet");
+        if (sheet) sheet.style.removeProperty("transform");
+      }
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+
+    function toggleQuality() {
+      if (qOpen) closeQuality();
+      else openQuality();
+    }
+
+    function chooseQuality(index) {
+      var item = qItems[index];
+      closeQuality();
+      if (qApply(item)) {
+        /* 记住这次选择：左上角与列表选中态都以它为准 */
+        qPick = { label: item.label, height: item.height || 0, auto: Boolean(item.auto), video: videoEl() };
+        qMemoClear();
+        window.setTimeout(function () {
+          paintStats();
+          renderQuality();
+        }, 80);
+        return;
+      }
+      downloadToast("这个清晰度切不了", true);
+    }
+
+    /*
+     * 有些站点把清晰度子菜单做成「打开设置时才生成」，这时页面上根本读不到档位。
+     * 于是静默点一次播放器自己的清晰度行（全程把面板藏起来，用户看不到），
+     * 让播放器把菜单建出来，之后就能正常读取和切换了。
+     */
+    function qlMenuNodes(selector) {
+      var out = [];
+      try {
+        out = document.querySelectorAll(selector);
+      } catch (e) {
+        out = [];
+      }
+      return out;
+    }
+
+    function qlFindRow() {
+      var rows = qlMenuNodes("[data-plyr-menu]");
+      var i;
+      var key;
+      for (i = 0; i < rows.length; i++) {
+        if (/清晰|畫質|画质|quality|解像|分辨率|resolution/i.test(rows[i].textContent || "")) return rows[i];
+      }
+      for (i = 0; i < rows.length; i++) {
+        key = String((rows[i].getAttribute && rows[i].getAttribute("data-plyr-menu")) || "").toLowerCase();
+        if (key === "quality") return rows[i];
+      }
+      return null;
+    }
+
+    function qlHideMenu() {
+      var panels = qlMenuNodes(".plyr__menu__container");
+      var i;
+      for (i = 0; i < panels.length; i++) panels[i].setAttribute("hidden", "");
+    }
+
+    function maybeHarvest() {
+      var panels;
+      var row;
+      var settings;
+      var fired = false;
+      if (qHarvested) return false;
+      if (!isWatchPage()) return false;
+      qHarvestTries += 1;
+      if (qHarvestTries > 4) {
+        qHarvested = true;
+        return false;
+      }
+      try {
+        panels = qlMenuNodes(".plyr__menu__container");
+        row = qlFindRow();
+        if (!row && !panels.length) {
+          qHarvested = true;
+          return false;
+        }
+        qSuppress = true;
+        if (!row) {
+          settings = panels[0].parentNode ? panels[0].parentNode.querySelector("button[data-plyr='settings']") : null;
+          if (!settings) settings = document.querySelector("button[data-plyr='settings']");
+          if (settings && qSoftClick(settings)) fired = true;
+          qlHideMenu();
+          row = qlFindRow();
+        }
+        if (row && qSoftClick(row)) fired = true;
+        qlHideMenu();
+        qSuppress = false;
+        qHarvested = true;
+        qMemoClear();
+        qProbeAt = 0;
+        qProbeCount = 0;
+        qSeen = false;
+        if (qOpen) {
+          window.setTimeout(function () {
+            renderQuality();
+          }, 60);
+        }
+        return fired;
+      } catch (e) {
+        qSuppress = false;
+      }
+      return false;
+    }
+
+    function qDragStart(event) {
+      var touch = event && event.touches && event.touches[0];
+      if (!touch) return;
+      qDrag = { y: touch.clientY, dy: 0 };
+    }
+
+    function qDragMove(event) {
+      var touch = event && event.touches && event.touches[0];
+      var sheet;
+      if (!qDrag || !touch) return;
+      qDrag.dy = Math.max(0, touch.clientY - qDrag.y);
+      sheet = qSheetEl();
+      if (sheet) sheet.style.transform = "translateY(" + Math.round(qDrag.dy) + "px)";
+      if (event.cancelable) event.preventDefault();
+      if (event.stopPropagation) event.stopPropagation();
+    }
+
+    function qDragEnd() {
+      var sheet = qSheetEl();
+      var dy;
+      if (!qDrag) return;
+      dy = qDrag.dy;
+      qDrag = null;
+      if (sheet) sheet.style.removeProperty("transform");
+      if (dy > 56) closeQuality();
+    }
+
+    function ensureQualityButton() {
+      var settings;
+      var btn;
+      if (!isWatchPage()) return null;
+      settings = document.querySelector('button[data-plyr="settings"]');
+      if (!settings || !settings.parentNode) return null;
+      btn = document.getElementById("via-missav-quality-btn");
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.id = "via-missav-quality-btn";
+        btn.type = "button";
+        btn.className = "plyr__controls__item plyr__control";
+        btn.setAttribute("data-via-missav-keep", "1");
+        btn.setAttribute("aria-label", "清晰度");
+        btn.setAttribute("aria-expanded", "false");
+        btn.innerHTML = qIcon() + '<span class="plyr__tooltip">清晰度</span>';
+        bindPress(btn, toggleQuality);
+      }
+      if (settings.previousElementSibling !== btn || btn.parentNode !== settings.parentNode) {
+        settings.parentNode.insertBefore(btn, settings);
+      }
+      if (!qSeen && !qHarvested) maybeHarvest();
+      if (qAvailable()) {
+        btn.style.removeProperty("display");
+      } else {
+        btn.style.display = "none";
+        if (qOpen) closeQuality();
+      }
+      return btn;
     }
 
     function flashPlay() {
@@ -1497,6 +2668,8 @@
       var panel;
       var url;
       if (!btn) return;
+      /* 采集清晰度菜单时放行，让播放器自己把菜单建出来 */
+      if (qSuppress) return;
       armDownload(btn);
       event.preventDefault();
       event.stopPropagation();
@@ -1541,18 +2714,102 @@
       return d && isFinite(d) ? d : 0;
     }
 
+    /* 只写一次：同时写 player 和 video 会触发两次 seek，是音画不同步的来源之一 */
     function seekTo(time) {
       var player = window.player;
       var video = videoEl();
       time = clampTime(time, mediaDuration());
-      try {
-        if (player && typeof player.currentTime === "number") player.currentTime = time;
-      } catch (e) {}
       if (video) {
         try {
           video.currentTime = time;
-        } catch (e2) {}
+          return;
+        } catch (e) {}
       }
+      try {
+        if (player && typeof player.currentTime === "number") player.currentTime = time;
+      } catch (e2) {}
+    }
+
+    /* 快进快退合并：连点只在停手后真正跳一次，避免连续 seek 让音轨和画面错位 */
+    function commitSeek() {
+      var video = videoEl();
+      var wasPlaying = !isPaused();
+      var target;
+      seekCommitTimer = 0;
+      target = clampTime(seekBase + seekAcc, mediaDuration());
+      seekAcc = 0;
+      seekTo(target);
+      if (wasPlaying && video) {
+        var recover = function () {
+          video.removeEventListener("seeked", recover);
+          if (video.paused && !slide) {
+            var maybe = video.play();
+            if (maybe && maybe.catch) maybe.catch(function () {});
+          }
+        };
+        video.addEventListener("seeked", recover);
+        window.setTimeout(function () {
+          video.removeEventListener("seeked", recover);
+        }, 1500);
+      }
+    }
+
+    function flushSeek() {
+      if (!seekCommitTimer) return;
+      window.clearTimeout(seekCommitTimer);
+      commitSeek();
+    }
+
+    function queueSeek(delta) {
+      if (!seekCommitTimer) {
+        seekBase = mediaTime();
+        seekAcc = 0;
+      } else {
+        window.clearTimeout(seekCommitTimer);
+      }
+      seekAcc += delta;
+      seekCommitTimer = window.setTimeout(commitSeek, 220);
+    }
+
+    /* 拖动进度时限频 seek，松手再补一次精确位置 */
+    function scrubSeek(time, force) {
+      var wait;
+      scrubSeekTime = time;
+      wait = force ? 0 : Math.max(0, 320 - (Date.now() - scrubSeekAt));
+      if (wait <= 0) {
+        flushScrubSeek();
+        return;
+      }
+      if (!scrubSeekTimer) scrubSeekTimer = window.setTimeout(flushScrubSeek, wait);
+    }
+
+    function flushScrubSeek() {
+      var time = scrubSeekTime;
+      if (scrubSeekTimer) {
+        window.clearTimeout(scrubSeekTimer);
+        scrubSeekTimer = 0;
+      }
+      if (time === null) return;
+      scrubSeekTime = null;
+      scrubSeekAt = Date.now();
+      seekTo(time);
+    }
+
+    function resumeAfterSeek() {
+      var video = videoEl();
+      var done = false;
+      function go() {
+        if (done) return;
+        done = true;
+        if (video) video.removeEventListener("seeked", go);
+        playNow();
+      }
+      if (!video || !video.seeking) {
+        go();
+        return;
+      }
+      video.addEventListener("seeked", go);
+      window.setTimeout(go, 800);
     }
 
     function formatClock(time) {
@@ -1576,45 +2833,97 @@
       return Math.max(0, Math.min(100, Math.round((raw / brightMax) * 100)));
     }
 
-    function readSystemBright() {
-      fetch(BRIGHT_URL, { cache: "no-store" })
-        .then(function (response) {
+    /*
+     * 系统亮度/音量助手请求：每种只允许一个请求在路上，期间只记住最新值，
+     * 返回后再发。之前并发请求会在手机端乱序执行，导致“时好时坏”。
+     */
+    function sysFetch(url, ms) {
+      var ctl = window.AbortController ? new window.AbortController() : null;
+      var timer = 0;
+      var opts = { cache: "no-store" };
+      if (ctl) {
+        opts.signal = ctl.signal;
+        timer = window.setTimeout(function () {
+          try {
+            ctl.abort();
+          } catch (e) {}
+        }, ms || 2500);
+      }
+      return fetch(url, opts).then(
+        function (response) {
+          if (timer) window.clearTimeout(timer);
           return response.text();
-        })
-        .then(function (text) {
+        },
+        function (err) {
+          if (timer) window.clearTimeout(timer);
+          throw err;
+        }
+      );
+    }
+
+    function sysFail(kind) {
+      var now = Date.now();
+      sysFails[kind] += 1;
+      if (sysFails[kind] < 2 || now - sysWarnAt < 8000) return;
+      sysWarnAt = now;
+      downloadToast(kind === "bright" ? "系统亮度助手没有响应" : "系统音量助手没有响应", true);
+    }
+
+    function sysPump(kind) {
+      var value = sysNext[kind];
+      var base = kind === "bright" ? BRIGHT_URL : VOL_URL;
+      if (value === null || sysBusy[kind]) return;
+      sysNext[kind] = null;
+      sysBusy[kind] = true;
+      function done() {
+        sysBusy[kind] = false;
+        if (sysNext[kind] !== null) sysPump(kind);
+      }
+      sysFetch(base + "?v=" + value, 2500).then(
+        function () {
+          sysFails[kind] = 0;
+          done();
+        },
+        function () {
+          sysFail(kind);
+          done();
+        }
+      );
+    }
+
+    function refreshSystem(force) {
+      var now = Date.now();
+      if (!force && now - sysReadAt < 2500) return;
+      sysReadAt = now;
+      readSystemBright();
+      readSystemVol();
+    }
+
+    function readSystemBright() {
+      if (sysBusy.bright) return;
+      sysBusy.bright = true;
+      sysFetch(BRIGHT_URL, 1800).then(
+        function (text) {
           var n = parseInt(String(text).trim(), 10);
+          sysBusy.bright = false;
+          if (sysNext.bright !== null) sysPump("bright");
           if (!isFinite(n)) return;
           if (slide && slide.mode === "bright") return;
           brightRaw = Math.max(1, Math.min(brightMax, n));
-        })
-        .catch(function () {});
+          if (slide && !slide.mode) slide.bright0 = brightRaw;
+        },
+        function () {
+          sysBusy.bright = false;
+          if (sysNext.bright !== null) sysPump("bright");
+        }
+      );
     }
 
-    function writeSystemBright(raw, force) {
+    function writeSystemBright(raw) {
       raw = Math.max(1, Math.min(brightMax, Math.round(raw)));
       brightRaw = raw;
-      if (!force && brightTimer) {
-        if (slide) slide.pendingBright = raw;
-        return;
-      }
-      if (brightTimer) {
-        window.clearTimeout(brightTimer);
-        brightTimer = 0;
-      }
-      function send() {
-        var value = raw;
-        brightTimer = 0;
-        brightSentAt = Date.now();
-        if (slide && slide.pendingBright != null) {
-          value = slide.pendingBright;
-          slide.pendingBright = null;
-        }
-        brightRaw = value;
-        fetch(BRIGHT_URL + "?v=" + value, { cache: "no-store" }).catch(function () {});
-      }
-      var wait = force ? 0 : Math.max(0, 90 - (Date.now() - brightSentAt));
-      if (wait <= 0) send();
-      else brightTimer = window.setTimeout(send, wait);
+      sysNext.bright = raw;
+      sysPump("bright");
     }
 
     function volPercent(raw) {
@@ -1622,47 +2931,33 @@
     }
 
     function readSystemVol() {
-      fetch(VOL_URL, { cache: "no-store" })
-        .then(function (response) {
-          return response.text();
-        })
-        .then(function (text) {
+      if (sysBusy.vol) return;
+      sysBusy.vol = true;
+      sysFetch(VOL_URL, 1800).then(
+        function (text) {
           var parts = String(text).trim().split(/\s+/);
           var n = parseInt(parts[0], 10);
           var max = parseInt(parts[1], 10);
+          sysBusy.vol = false;
+          if (sysNext.vol !== null) sysPump("vol");
           if (isFinite(max) && max > 0) volMax = max;
           if (!isFinite(n)) return;
           if (slide && slide.mode === "vol") return;
           volRaw = Math.max(0, Math.min(volMax, n));
-        })
-        .catch(function () {});
+          if (slide && !slide.mode) slide.vol0 = volRaw;
+        },
+        function () {
+          sysBusy.vol = false;
+          if (sysNext.vol !== null) sysPump("vol");
+        }
+      );
     }
 
-    function writeSystemVol(raw, force) {
+    function writeSystemVol(raw) {
       raw = Math.max(0, Math.min(volMax, Math.round(raw)));
       volRaw = raw;
-      if (!force && volTimer) {
-        if (slide) slide.pendingVol = raw;
-        return;
-      }
-      if (volTimer) {
-        window.clearTimeout(volTimer);
-        volTimer = 0;
-      }
-      function send() {
-        var value = raw;
-        volTimer = 0;
-        volSentAt = Date.now();
-        if (slide && slide.pendingVol != null) {
-          value = slide.pendingVol;
-          slide.pendingVol = null;
-        }
-        volRaw = value;
-        fetch(VOL_URL + "?v=" + value, { cache: "no-store" }).catch(function () {});
-      }
-      var wait = force ? 0 : Math.max(0, 90 - (Date.now() - volSentAt));
-      if (wait <= 0) send();
-      else volTimer = window.setTimeout(send, wait);
+      sysNext.vol = raw;
+      sysPump("vol");
     }
 
     function showLevel(side, label, pct) {
@@ -1964,8 +3259,16 @@
         if (scale > 8) scale = 8;
       }
       label.style.fontSize = titlePx() * scale + "px";
-      label.textContent = formatClock(time);
+      label.textContent = formatClock(time) + scrubDeltaText(time);
       scrub.classList.add("on");
+    }
+
+    function scrubDeltaText(time) {
+      var delta;
+      if (!slide || typeof slide.baseTime !== "number") return "";
+      delta = Math.round(time - slide.baseTime);
+      if (!delta) return "";
+      return "  (" + (delta > 0 ? "+" : "-") + Math.abs(delta) + "s)";
     }
 
     function pointOf(event) {
@@ -1984,6 +3287,7 @@
     function enterScrub() {
       longTimer = 0;
       if (!slide || slide.mode) return;
+      flushSeek();
       slide.mode = "scrub";
       slide.wasPaused = isPaused();
       slide.baseTime = mediaTime();
@@ -2002,24 +3306,26 @@
       var ratio = -dy / Math.max(1, (rect.height || 1) * 0.85);
       if (!slide) return;
       if (slide.mode === "bright") {
-        writeSystemBright(slide.bright0 + ratio * brightMax, false);
+        writeSystemBright(slide.bright0 + ratio * brightMax);
         showLevel("left", "亮度", brightPercent(brightRaw));
         return;
       }
       if (slide.mode === "vol") {
-        writeSystemVol(slide.vol0 + ratio * volMax, false);
+        writeSystemVol(slide.vol0 + ratio * volMax);
         showLevel("right", "音量", volPercent(volRaw));
       }
     }
 
+    /* 整个画面宽度对应的可拖动时长：最多 5 分钟，短视频则是整段 */
     function updateScrub(dx) {
       var rect = boxRect();
       var dur = mediaDuration();
+      var span = dur > 0 ? Math.min(dur, 300) : 300;
       var time;
       if (!slide) return;
-      time = clampTime(slide.baseTime + (dx / Math.max(1, rect.width || 1)) * dur, dur);
+      time = clampTime(slide.baseTime + (dx / Math.max(1, rect.width || 1)) * span, dur);
       slide.time = time;
-      seekTo(time);
+      scrubSeek(time, false);
       showScrub(time);
     }
 
@@ -2041,6 +3347,7 @@
       };
       clearLong();
       longTimer = window.setTimeout(enterScrub, 500);
+      refreshSystem(false);
       if (event.cancelable) event.preventDefault();
     }
 
@@ -2066,7 +3373,13 @@
       }
       if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
       clearLong();
-      if (Math.abs(dy) <= Math.abs(dx)) return;
+      if (Math.abs(dy) <= Math.abs(dx)) {
+        /* 横向拖动：不用长按，直接进入进度调整 */
+        enterScrub();
+        if (event.cancelable) event.preventDefault();
+        updateScrub(dx);
+        return;
+      }
       if (pending) {
         window.clearTimeout(pending);
         pending = 0;
@@ -2092,15 +3405,12 @@
         if (event.cancelable) event.preventDefault();
         event.stopPropagation();
       }
-      if (mode === "bright") {
-        writeSystemBright(slide && slide.pendingBright != null ? slide.pendingBright : brightRaw, true);
-      }
-      if (mode === "vol") {
-        writeSystemVol(slide && slide.pendingVol != null ? slide.pendingVol : volRaw, true);
-      }
+      if (mode === "bright") writeSystemBright(brightRaw);
+      if (mode === "vol") writeSystemVol(volRaw);
       if (mode === "scrub") {
         hideScrub();
-        if (resume) playNow();
+        if (slide && typeof slide.time === "number") scrubSeek(slide.time, true);
+        if (resume) resumeAfterSeek();
       } else if (mode === "bright" || mode === "vol") {
         window.setTimeout(hideLevels, 450);
       }
@@ -2216,26 +3526,35 @@
       }
       paintControls(uiShown);
       armDownloads();
+      ensureQualityButton();
+      if (qOpen) {
+        renderQuality();
+        pinQuality(document.getElementById("via-missav-quality"));
+        setUi(true);
+      }
       clearVeil();
-      if (!(slide && slide.mode === "bright")) readSystemBright();
-      if (!(slide && slide.mode === "vol")) readSystemVol();
       var touchHost = videoHost();
       if (touchHost && touchHost.style) touchHost.style.touchAction = "none";
     }, 800);
+
+    statHookNet();
+    if (statTimer) window.clearInterval(statTimer);
+    statTimer = window.setInterval(paintStats, 500);
+    paintStats();
   }
 
   function injectPageGestureHook() {
     var root = document.documentElement;
     if (!root) return;
-    if (root.getAttribute("data-via-missav-gesture-live") === "17") return;
+    if (root.getAttribute("data-via-missav-gesture-live") === "21") return;
     try {
-      if (root.getAttribute("data-via-missav-gesture") !== "17") {
-        root.setAttribute("data-via-missav-gesture", "17");
+      if (root.getAttribute("data-via-missav-gesture") !== "21") {
+        root.setAttribute("data-via-missav-gesture", "21");
         injectInlineScript("(" + pageGestureHook.toString() + ")();");
       }
     } catch (e) {}
     try {
-      if (root.getAttribute("data-via-missav-gesture-live") === "17") return;
+      if (root.getAttribute("data-via-missav-gesture-live") === "21") return;
       pageGestureHook();
     } catch (e2) {}
   }
@@ -2294,7 +3613,7 @@
           schedulePlay();
           return;
         }
-        video = document.querySelector("video.player, #player video, video");
+        video = document.querySelector("video.player") || document.querySelector("#player video") || document.querySelector("video:not(.preview)");
         if (hasPopHandler(target) && (!video || video.paused)) {
           event.preventDefault();
           event.stopImmediatePropagation();
@@ -2457,6 +3776,9 @@
       el.id === "video" ||
       el.id === "via-missav-layer" ||
       el.id === "via-missav-hud" ||
+      el.id === "via-missav-stats" ||
+      el.id === "via-missav-quality-btn" ||
+      el.id === "via-missav-quality" ||
       el.id === "via-missav-overlay" ||
       el.id === "via-missav-play" ||
       el.id === "via-missav-seekbar"
@@ -2667,6 +3989,9 @@
         el.id === "via-missav-overlay" ||
         el.id === "via-missav-layer" ||
         el.id === "via-missav-hud" ||
+        el.id === "via-missav-stats" ||
+        el.id === "via-missav-quality-btn" ||
+        el.id === "via-missav-quality" ||
         el.id === "via-missav-play" ||
         el.id === "via-missav-seekbar" ||
         el.getAttribute(CTRL_ATTR) === "1" ||
@@ -3199,13 +4524,28 @@
       "box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;max-width:90vw;}" +
       "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}" +
       "#via-missav-layer{display:none!important;}" +
+      "#via-missav-magnets{position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483200;display:none;}" +
+      "#via-missav-magnets.via-open{display:block;}" +
+      "#via-missav-magnets .via-m-back{position:absolute;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.52);}" +
+      "#via-missav-magnets .via-m-sheet{position:absolute;left:0;right:0;bottom:0;margin:0 auto;max-width:640px;max-height:72%;" +
+      "overflow-y:auto;-webkit-overflow-scrolling:touch;box-sizing:border-box;background:#2e3440;color:#eceff4;" +
+      "border-radius:14px 14px 0 0;box-shadow:0 -8px 28px rgba(0,0,0,.5);padding-bottom:.6rem;}" +
+      "#via-missav-magnets .via-m-head{padding:.8rem 1rem .5rem;font-size:14px;color:rgba(236,239,244,.7);}" +
+      "#via-missav-magnets .via-m-item{appearance:none;-webkit-appearance:none;display:block;width:100%;box-sizing:border-box;" +
+      "margin:0;padding:.7rem 1rem;background:transparent;border:0;border-top:1px solid rgba(255,255,255,.08);" +
+      "color:inherit;font:inherit;text-align:left;line-height:1.35;}" +
+      "#via-missav-magnets .via-m-item:active{background:rgba(255,255,255,.07);}" +
+      "#via-missav-magnets .via-m-name{display:block;font-size:14px;color:#ebcb8b;word-break:break-all;}" +
+      "#via-missav-magnets .via-m-tag{display:inline-block;margin-left:.5em;padding:0 .45em;border-radius:4px;" +
+      "font-size:12px;color:#fff;background:#bf616a;vertical-align:baseline;}" +
+      "#via-missav-magnets .via-m-meta{display:block;margin-top:.15rem;font-size:12px;color:rgba(236,239,244,.6);}" +
       "[" +
       CTRL_ATTR +
       "='1'],[data-via-missav-site-seek='1']{display:none!important;}";
     parent.appendChild(style);
   }
 
-  function clipboardIcon() {
+  function searchIcon() {
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("fill", "none");
     svg.setAttribute("viewBox", "0 0 24 24");
@@ -3215,12 +4555,193 @@
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
     path.setAttribute("stroke-width", "2");
-    path.setAttribute(
-      "d",
-      "M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-    );
+    path.setAttribute("d", "M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z");
     svg.appendChild(path);
     return svg;
+  }
+
+  function btsowUrl(code) {
+    return "https://btsow.live/search/" + encodeURIComponent(code);
+  }
+
+  /* 用一次临时链接点击在新标签打开，不受我们对 window.open 的广告拦截影响 */
+  function openExternal(url) {
+    var a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.style.display = "none";
+    (document.body || document.documentElement).appendChild(a);
+    a.click();
+    window.setTimeout(function () {
+      if (a.parentNode) a.parentNode.removeChild(a);
+    }, 0);
+  }
+
+  /* ---- 视频下方“下载”：弹出页面「磁力下载」里的列表 ---- */
+
+  var MAGNET_ID = "via-missav-magnets";
+
+  function readMagnets() {
+    var anchors = document.querySelectorAll('a[href^="magnet:"]');
+    var seen = {};
+    var list = [];
+    var i;
+    var a;
+    var href;
+    var row;
+    var meta;
+    var tags;
+    var spans;
+    var s;
+    var text;
+    for (i = 0; i < anchors.length; i++) {
+      a = anchors[i];
+      href = a.getAttribute("href") || "";
+      if (!href || seen[href]) continue;
+      seen[href] = 1;
+      row = a.closest ? a.closest("tr") : null;
+      if (!row) row = a.parentElement;
+      meta = textOf(row);
+      tags = [];
+      spans = row ? row.querySelectorAll("span") : [];
+      for (s = 0; s < spans.length; s++) {
+        text = textOf(spans[s]);
+        if (text && text.length <= 8 && !a.contains(spans[s]) && tags.indexOf(text) === -1) tags.push(text);
+      }
+      list.push({
+        href: href,
+        name: textOf(a) || href.slice(0, 60),
+        tags: tags,
+        size: (meta.match(/\d+(?:\.\d+)?\s*(?:TB|GB|MB|KB)/i) || [""])[0],
+        date: (meta.match(/\d{4}-\d{2}-\d{2}/) || [""])[0]
+      });
+    }
+    return list;
+  }
+
+  function closeMagnets() {
+    var wrap = document.getElementById(MAGNET_ID);
+    if (wrap) wrap.classList.remove("via-open");
+  }
+
+  function openMagnets() {
+    var items = readMagnets();
+    var wrap;
+    var sheet;
+    var head;
+    var back;
+    var i;
+    if (!items.length) {
+      toast("这个视频没有磁力下载", true);
+      return;
+    }
+    ensureStyles();
+    wrap = document.getElementById(MAGNET_ID);
+    if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    wrap = document.createElement("div");
+    wrap.id = MAGNET_ID;
+    wrap.setAttribute("data-via-missav-keep", "1");
+    back = document.createElement("div");
+    back.className = "via-m-back";
+    back.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMagnets();
+    });
+    sheet = document.createElement("div");
+    sheet.className = "via-m-sheet";
+    head = document.createElement("div");
+    head.className = "via-m-head";
+    head.textContent = "磁力下载（点击复制链接）";
+    sheet.appendChild(head);
+    for (i = 0; i < items.length; i++) {
+      sheet.appendChild(magnetItem(items[i]));
+    }
+    wrap.appendChild(back);
+    wrap.appendChild(sheet);
+    (document.body || document.documentElement).appendChild(wrap);
+    wrap.classList.add("via-open");
+  }
+
+  function magnetItem(item) {
+    var btn = document.createElement("button");
+    var name = document.createElement("span");
+    var meta = document.createElement("span");
+    var parts = [];
+    var i;
+    var tag;
+    btn.type = "button";
+    btn.className = "via-m-item";
+    name.className = "via-m-name";
+    name.appendChild(document.createTextNode(item.name));
+    for (i = 0; i < item.tags.length; i++) {
+      tag = document.createElement("span");
+      tag.className = "via-m-tag";
+      tag.textContent = item.tags[i];
+      name.appendChild(tag);
+    }
+    meta.className = "via-m-meta";
+    if (item.size) parts.push(item.size);
+    if (item.date) parts.push(item.date);
+    meta.textContent = parts.join("  ·  ");
+    btn.appendChild(name);
+    if (parts.length) btn.appendChild(meta);
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      copyText(item.href)
+        .then(function () {
+          toast("已复制磁力链接");
+        })
+        .catch(function () {
+          toast("复制失败，请长按选择文本", true);
+        });
+    });
+    return btn;
+  }
+
+  function magnetEntry(node) {
+    var a = node && node.closest ? node.closest("a") : null;
+    var row;
+    var text;
+    if (!a) return null;
+    if (compactText(a) !== "下载") return null;
+    if (a.closest && a.closest("table, .plyr, #player")) return null;
+    row = a.parentElement;
+    if (!row) return null;
+    text = compactText(row);
+    if (text.indexOf("收藏") === -1 || !/片单|片單/.test(text)) return null;
+    return a;
+  }
+
+  function armMagnetDownload() {
+    var links = document.querySelectorAll("a");
+    var i;
+    var a;
+    for (i = 0; i < links.length; i++) {
+      a = links[i];
+      if (a.getAttribute("data-via-missav-magnet") === "1") continue;
+      if (!magnetEntry(a)) continue;
+      a.setAttribute("data-via-missav-magnet", "1");
+      a.setAttribute("data-via-missav-href", a.getAttribute("href") || "");
+      a.setAttribute("href", "#");
+      a.removeAttribute("target");
+    }
+    if (armMagnetDownload.listening) return;
+    armMagnetDownload.listening = true;
+    document.addEventListener(
+      "click",
+      function (event) {
+        var entry = magnetEntry(event.target);
+        if (!entry) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        openMagnets();
+      },
+      true
+    );
   }
 
   function parentGap(el) {
@@ -3238,9 +4759,9 @@
     btn.id = BTN_ID;
     btn.setAttribute(BTN_ATTR, "1");
     btn.className = shareBtn.className || "";
-    btn.setAttribute("aria-label", "复制番号与链接");
+    btn.setAttribute("aria-label", "在 BTSOW 搜索番号");
 
-    var icon = clipboardIcon();
+    var icon = searchIcon();
     var shareSvg = shareBtn.querySelector("svg");
     if (shareSvg && shareSvg.getAttribute("class")) {
       icon.setAttribute("class", shareSvg.getAttribute("class"));
@@ -3250,7 +4771,7 @@
     var shareSpan = shareBtn.querySelector("span");
     var label = document.createElement("span");
     if (shareSpan && shareSpan.className) label.className = shareSpan.className;
-    label.textContent = "复制";
+    label.textContent = "BTSOW";
     btn.appendChild(label);
 
     if (!parentGap(shareBtn)) {
@@ -3261,13 +4782,11 @@
       event.preventDefault();
       event.stopPropagation();
       var data = payload();
-      copyText(data.text)
-        .then(function () {
-          toast(data.code ? "已复制 " + data.code : "已复制标题和链接");
-        })
-        .catch(function () {
-          toast("复制失败，请长按选择文本", true);
-        });
+      if (!data.code) {
+        toast("没有找到番号", true);
+        return;
+      }
+      openExternal(btsowUrl(data.code));
     });
     return btn;
   }
@@ -3430,6 +4949,7 @@
   function startDomWork() {
     injectAdCss();
     insertCopyButton();
+    armMagnetDownload();
     restoreMistakenContent();
     hideKnownAds();
     disablePopHandlers();
@@ -3441,6 +4961,7 @@
     var timer = window.setInterval(function () {
       tries += 1;
       insertCopyButton();
+      armMagnetDownload();
       hideKnownAds();
       disablePopHandlers();
       keepLandscapeControls();
@@ -3453,6 +4974,7 @@
       if (now - last < 200) return;
       last = now;
       insertCopyButton();
+      armMagnetDownload();
       hideKnownAds();
       disablePopHandlers();
       keepLandscapeControls();
