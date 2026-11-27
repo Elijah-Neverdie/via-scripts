@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.9.0
-// @description  单击开关控制条，双击快进快退，左右拖动调整进度，左滑调节系统亮度，右滑调节系统音量，长按拖动进度，左上角显示网速和视频真实分辨率，下载按钮左侧可上拉切换清晰度，“BTSOW”按钮搜索番号，视频下方“下载”弹出磁力下载列表
+// @version      1.10.0
+// @description  单击开关控制条，双击快进快退，左右拖动调整进度，左滑调节视频亮度，右滑调节视频音量，长按拖动进度，左上角显示网速和视频真实分辨率，下载按钮左侧可上拉切换清晰度，“BTSOW”按钮搜索番号，视频下方“下载”弹出磁力下载列表
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -394,10 +394,10 @@
 
   function pageGestureHook() {
     var root = document.documentElement;
-    if (root && root.getAttribute("data-via-missav-gesture-live") === "21") return;
-    if (root) root.setAttribute("data-via-missav-gesture-live", "21");
-    if (window.__viaMissavGestureHook === 21) return;
-    window.__viaMissavGestureHook = 21;
+    if (root && root.getAttribute("data-via-missav-gesture-live") === "22") return;
+    if (root) root.setAttribute("data-via-missav-gesture-live", "22");
+    if (window.__viaMissavGestureHook === 22) return;
+    window.__viaMissavGestureHook = 22;
     var SEEK = 15;
     var GAP = 280;
     var pending = 0;
@@ -415,16 +415,9 @@
     var seekTimer = 0;
     var sideTimer = 0;
     var inlineArea = 0;
-    var brightRaw = 128;
-    var brightMax = 255;
-    var brightSentAt = 0;
-    var brightTimer = 0;
-    var BRIGHT_URL = "http://127.0.0.1:27182/via-missav-bright";
-    var volRaw = 0;
-    var volMax = 150;
-    var volSentAt = 0;
-    var volTimer = 0;
-    var VOL_URL = "http://127.0.0.1:27182/via-missav-vol";
+    var BRIGHT_KEY = "via-missav-video-bright";
+    var BRIGHT_MIN = 0.15;
+    var brightLevel = 1;
     var slide = null;
     var seekAcc = 0;
     var seekBase = 0;
@@ -432,11 +425,6 @@
     var scrubSeekAt = 0;
     var scrubSeekTimer = 0;
     var scrubSeekTime = null;
-    var sysBusy = { bright: false, vol: false };
-    var sysNext = { bright: null, vol: null };
-    var sysFails = { bright: 0, vol: 0 };
-    var sysWarnAt = 0;
-    var sysReadAt = 0;
     var longTimer = 0;
     var skipTap = 0;
     var thumbCues = null;
@@ -2829,135 +2817,66 @@
       if (veil && veil.parentNode) veil.parentNode.removeChild(veil);
     }
 
-    function brightPercent(raw) {
-      return Math.max(0, Math.min(100, Math.round((raw / brightMax) * 100)));
-    }
-
     /*
-     * 系统亮度/音量助手请求：每种只允许一个请求在路上，期间只记住最新值，
-     * 返回后再发。之前并发请求会在手机端乱序执行，导致“时好时坏”。
+     * 亮度和音量只作用在当前视频上，不依赖任何外部服务：
+     * 亮度用视频的 filter: brightness()，最大 100%，也就是当前系统亮度；
+     * 音量用 video.volume，最大 100%，也就是当前系统音量。
      */
-    function sysFetch(url, ms) {
-      var ctl = window.AbortController ? new window.AbortController() : null;
-      var timer = 0;
-      var opts = { cache: "no-store" };
-      if (ctl) {
-        opts.signal = ctl.signal;
-        timer = window.setTimeout(function () {
-          try {
-            ctl.abort();
-          } catch (e) {}
-        }, ms || 2500);
+    function readBright() {
+      var raw;
+      var n;
+      try {
+        raw = window.localStorage.getItem(BRIGHT_KEY);
+      } catch (e) {
+        raw = null;
       }
-      return fetch(url, opts).then(
-        function (response) {
-          if (timer) window.clearTimeout(timer);
-          return response.text();
-        },
-        function (err) {
-          if (timer) window.clearTimeout(timer);
-          throw err;
-        }
-      );
+      n = parseFloat(raw);
+      if (isFinite(n)) brightLevel = Math.max(BRIGHT_MIN, Math.min(1, n));
     }
 
-    function sysFail(kind) {
-      var now = Date.now();
-      sysFails[kind] += 1;
-      if (sysFails[kind] < 2 || now - sysWarnAt < 8000) return;
-      sysWarnAt = now;
-      downloadToast(kind === "bright" ? "系统亮度助手没有响应" : "系统音量助手没有响应", true);
-    }
-
-    function sysPump(kind) {
-      var value = sysNext[kind];
-      var base = kind === "bright" ? BRIGHT_URL : VOL_URL;
-      if (value === null || sysBusy[kind]) return;
-      sysNext[kind] = null;
-      sysBusy[kind] = true;
-      function done() {
-        sysBusy[kind] = false;
-        if (sysNext[kind] !== null) sysPump(kind);
+    function applyBright() {
+      var video = videoEl();
+      if (!video || !video.style) return;
+      if (brightLevel >= 0.995) {
+        if (video.style.filter) video.style.removeProperty("filter");
+        return;
       }
-      sysFetch(base + "?v=" + value, 2500).then(
-        function () {
-          sysFails[kind] = 0;
-          done();
-        },
-        function () {
-          sysFail(kind);
-          done();
-        }
-      );
+      video.style.setProperty("filter", "brightness(" + brightLevel.toFixed(3) + ")", "important");
     }
 
-    function refreshSystem(force) {
-      var now = Date.now();
-      if (!force && now - sysReadAt < 2500) return;
-      sysReadAt = now;
-      readSystemBright();
-      readSystemVol();
+    function setBright(level) {
+      brightLevel = Math.max(BRIGHT_MIN, Math.min(1, level));
+      applyBright();
     }
 
-    function readSystemBright() {
-      if (sysBusy.bright) return;
-      sysBusy.bright = true;
-      sysFetch(BRIGHT_URL, 1800).then(
-        function (text) {
-          var n = parseInt(String(text).trim(), 10);
-          sysBusy.bright = false;
-          if (sysNext.bright !== null) sysPump("bright");
-          if (!isFinite(n)) return;
-          if (slide && slide.mode === "bright") return;
-          brightRaw = Math.max(1, Math.min(brightMax, n));
-          if (slide && !slide.mode) slide.bright0 = brightRaw;
-        },
-        function () {
-          sysBusy.bright = false;
-          if (sysNext.bright !== null) sysPump("bright");
-        }
-      );
+    function saveBright() {
+      try {
+        window.localStorage.setItem(BRIGHT_KEY, String(brightLevel));
+      } catch (e) {}
     }
 
-    function writeSystemBright(raw) {
-      raw = Math.max(1, Math.min(brightMax, Math.round(raw)));
-      brightRaw = raw;
-      sysNext.bright = raw;
-      sysPump("bright");
+    function brightPercent() {
+      return Math.round(((brightLevel - BRIGHT_MIN) / (1 - BRIGHT_MIN)) * 100);
     }
 
-    function volPercent(raw) {
-      return Math.max(0, Math.min(100, Math.round((raw / volMax) * 100)));
+    function currentVolume() {
+      var video = videoEl();
+      if (!video) return 0;
+      return video.muted ? 0 : Math.max(0, Math.min(1, video.volume));
     }
 
-    function readSystemVol() {
-      if (sysBusy.vol) return;
-      sysBusy.vol = true;
-      sysFetch(VOL_URL, 1800).then(
-        function (text) {
-          var parts = String(text).trim().split(/\s+/);
-          var n = parseInt(parts[0], 10);
-          var max = parseInt(parts[1], 10);
-          sysBusy.vol = false;
-          if (sysNext.vol !== null) sysPump("vol");
-          if (isFinite(max) && max > 0) volMax = max;
-          if (!isFinite(n)) return;
-          if (slide && slide.mode === "vol") return;
-          volRaw = Math.max(0, Math.min(volMax, n));
-          if (slide && !slide.mode) slide.vol0 = volRaw;
-        },
-        function () {
-          sysBusy.vol = false;
-          if (sysNext.vol !== null) sysPump("vol");
-        }
-      );
+    function setVolume(level) {
+      var video = videoEl();
+      level = Math.max(0, Math.min(1, level));
+      if (!video) return;
+      try {
+        video.volume = level;
+      } catch (e) {}
+      video.muted = level <= 0;
     }
 
-    function writeSystemVol(raw) {
-      raw = Math.max(0, Math.min(volMax, Math.round(raw)));
-      volRaw = raw;
-      sysNext.vol = raw;
-      sysPump("vol");
+    function volPercent() {
+      return Math.round(currentVolume() * 100);
     }
 
     function showLevel(side, label, pct) {
@@ -3306,13 +3225,13 @@
       var ratio = -dy / Math.max(1, (rect.height || 1) * 0.85);
       if (!slide) return;
       if (slide.mode === "bright") {
-        writeSystemBright(slide.bright0 + ratio * brightMax);
-        showLevel("left", "亮度", brightPercent(brightRaw));
+        setBright(slide.bright0 + ratio * (1 - BRIGHT_MIN));
+        showLevel("left", "亮度", brightPercent());
         return;
       }
       if (slide.mode === "vol") {
-        writeSystemVol(slide.vol0 + ratio * volMax);
-        showLevel("right", "音量", volPercent(volRaw));
+        setVolume(slide.vol0 + ratio);
+        showLevel("right", "音量", volPercent());
       }
     }
 
@@ -3340,14 +3259,13 @@
         y: p.y,
         mode: "",
         moved: false,
-        bright0: brightRaw,
-        vol0: volRaw,
+        bright0: brightLevel,
+        vol0: currentVolume(),
         baseTime: mediaTime(),
         time: mediaTime()
       };
       clearLong();
       longTimer = window.setTimeout(enterScrub, 500);
-      refreshSystem(false);
       if (event.cancelable) event.preventDefault();
     }
 
@@ -3405,8 +3323,7 @@
         if (event.cancelable) event.preventDefault();
         event.stopPropagation();
       }
-      if (mode === "bright") writeSystemBright(brightRaw);
-      if (mode === "vol") writeSystemVol(volRaw);
+      if (mode === "bright") saveBright();
       if (mode === "scrub") {
         hideScrub();
         if (slide && typeof slide.time === "number") scrubSeek(slide.time, true);
@@ -3460,8 +3377,8 @@
     }
 
     clearVeil();
-    readSystemBright();
-    readSystemVol();
+    readBright();
+    applyBright();
     injectStyle();
     removeLegacyLayer();
     document.addEventListener("touchstart", onGestureStart, { capture: true, passive: false });
@@ -3533,6 +3450,7 @@
         setUi(true);
       }
       clearVeil();
+      applyBright();
       var touchHost = videoHost();
       if (touchHost && touchHost.style) touchHost.style.touchAction = "none";
     }, 800);
@@ -3546,15 +3464,15 @@
   function injectPageGestureHook() {
     var root = document.documentElement;
     if (!root) return;
-    if (root.getAttribute("data-via-missav-gesture-live") === "21") return;
+    if (root.getAttribute("data-via-missav-gesture-live") === "22") return;
     try {
-      if (root.getAttribute("data-via-missav-gesture") !== "21") {
-        root.setAttribute("data-via-missav-gesture", "21");
+      if (root.getAttribute("data-via-missav-gesture") !== "22") {
+        root.setAttribute("data-via-missav-gesture", "22");
         injectInlineScript("(" + pageGestureHook.toString() + ")();");
       }
     } catch (e) {}
     try {
-      if (root.getAttribute("data-via-missav-gesture-live") === "21") return;
+      if (root.getAttribute("data-via-missav-gesture-live") === "22") return;
       pageGestureHook();
     } catch (e2) {}
   }
