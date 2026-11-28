@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MissAV Via 辅助
 // @namespace    missav-via-extra-button
-// @version      1.10.0
-// @description  单击开关控制条，双击快进快退，左右拖动调整进度，左滑调节视频亮度，右滑调节视频音量，长按拖动进度，左上角显示网速和视频真实分辨率，下载按钮左侧可上拉切换清晰度，“BTSOW”按钮搜索番号，视频下方“下载”弹出磁力下载列表
+// @version      1.11.0
+// @description  单击开关控制条，双击快进快退，左右拖动调整进度，左滑调节视频亮度，右滑调节视频音量，长按拖动进度，左上角显示网速和视频真实分辨率，下载按钮左侧可上拉切换清晰度，“BTSOW”按钮搜索番号，视频下方“下载”弹出磁力下载列表，可一键下载到 NAS 迅雷
 // @author       local
 // @homepageURL  https://github.com/Elijah-Neverdie/via-scripts
 // @updateURL    https://github.com/Elijah-Neverdie/via-scripts/releases/latest/download/missav.user.js
@@ -18,7 +18,12 @@
 // @match        *://thisav.com/*
 // @match        *://*.thisav.com/*
 // @run-at       document-start
-// @grant        none
+// @connect      10.10.10.10
+// @connect      10.144.0.1
+// @connect      *
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
 // ==/UserScript==
 
 (function () {
@@ -109,7 +114,7 @@
     return !isMissavHost(u.hostname);
   }
 
-  function toast(message, isError) {
+  function toast(message, isError, ms) {
     ensureStyles();
     var el = document.getElementById("via-missav-toast");
     if (!el) {
@@ -124,7 +129,7 @@
     if (toast.timer) window.clearTimeout(toast.timer);
     toast.timer = window.setTimeout(function () {
       el.style.display = "none";
-    }, 1800);
+    }, ms || 1800);
   }
   toast.timer = 0;
 
@@ -4392,37 +4397,6 @@
     return { code: code, title: title, text: lines.join("\n") };
   }
 
-  function execCopy(text) {
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    ta.style.top = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    var ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch (e) {
-      ok = false;
-    }
-    document.body.removeChild(ta);
-    return ok;
-  }
-
-  function copyText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text).catch(function () {
-        if (!execCopy(text)) throw new Error("copy failed");
-      });
-    }
-    return execCopy(text)
-      ? Promise.resolve()
-      : Promise.reject(new Error("copy failed"));
-  }
-
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     var parent = document.head || document.documentElement;
@@ -4437,7 +4411,7 @@
       BTN_ID +
       " svg{width:1.25rem;height:1.25rem;flex:none;}" +
       "#via-missav-toast{position:fixed;left:50%;bottom:1.5rem;transform:translateX(-50%);" +
-      "z-index:2147483647;padding:.65rem 1rem;border-radius:999px;font-size:14px;line-height:1.3;" +
+      "z-index:2147483647;padding:.65rem 1rem;border-radius:16px;font-size:14px;line-height:1.45;white-space:pre-line;text-align:center;" +
       "background:rgba(46,52,64,.96);color:#eceff4;border:1px solid #4c566a;" +
       "box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;max-width:90vw;}" +
       "#via-missav-toast[data-state='error']{border-color:#bf616a;color:#eceff4;}" +
@@ -4448,11 +4422,35 @@
       "#via-missav-magnets .via-m-sheet{position:absolute;left:0;right:0;bottom:0;margin:0 auto;max-width:640px;max-height:72%;" +
       "overflow-y:auto;-webkit-overflow-scrolling:touch;box-sizing:border-box;background:#2e3440;color:#eceff4;" +
       "border-radius:14px 14px 0 0;box-shadow:0 -8px 28px rgba(0,0,0,.5);padding-bottom:.6rem;}" +
-      "#via-missav-magnets .via-m-head{padding:.8rem 1rem .5rem;font-size:14px;color:rgba(236,239,244,.7);}" +
-      "#via-missav-magnets .via-m-item{appearance:none;-webkit-appearance:none;display:block;width:100%;box-sizing:border-box;" +
-      "margin:0;padding:.7rem 1rem;background:transparent;border:0;border-top:1px solid rgba(255,255,255,.08);" +
-      "color:inherit;font:inherit;text-align:left;line-height:1.35;}" +
-      "#via-missav-magnets .via-m-item:active{background:rgba(255,255,255,.07);}" +
+      "#via-missav-magnets .via-m-head{display:flex;align-items:center;justify-content:space-between;" +
+      "padding:.8rem 1rem .5rem;font-size:14px;color:rgba(236,239,244,.7);}" +
+      "#via-missav-magnets .via-m-setup{appearance:none;-webkit-appearance:none;background:transparent;border:0;padding:0;" +
+      "font:inherit;font-size:13px;color:#88c0d0;cursor:pointer;}" +
+      "#via-missav-magnets .via-m-item{display:flex;align-items:center;gap:.75rem;box-sizing:border-box;" +
+      "margin:0;padding:.7rem 1rem;border-top:1px solid rgba(255,255,255,.08);text-align:left;line-height:1.35;}" +
+      "#via-missav-magnets .via-m-info{flex:1;min-width:0;}" +
+      ".via-nasxl-btn{appearance:none;-webkit-appearance:none;flex:none;background:transparent;border:1px solid #eceff4;" +
+      "border-radius:0;color:#eceff4;cursor:pointer;font:400 10px/1 'Avenir Next','Segoe UI','PingFang SC','Microsoft YaHei UI',sans-serif;" +
+      "letter-spacing:.14em;min-height:30px;padding:0 10px;text-transform:uppercase;white-space:nowrap;}" +
+      ".via-nasxl-btn:active:not(:disabled){background:#eceff4;color:#2e3440;}" +
+      ".via-nasxl-btn[data-state='ok']{background:#2f7d4f;border-color:#2f7d4f;color:#fff;text-transform:none;letter-spacing:.04em;}" +
+      ".via-nasxl-btn[data-state='loading']{background:#d9d8d3;border-color:#b9b8b2;color:#77766f;cursor:wait;" +
+      "text-transform:none;letter-spacing:.04em;}" +
+      "#via-nasxl-dialog{position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483300;display:flex;" +
+      "align-items:center;justify-content:center;background:rgba(28,27,25,.45);}" +
+      "#via-nasxl-dialog .via-nasxl-box{background:#f3f2ee;border:1px solid #1c1b19;color:#1c1b19;box-sizing:border-box;" +
+      "font:400 13px/1.6 'Avenir Next','Segoe UI','PingFang SC','Microsoft YaHei UI',sans-serif;width:360px;max-width:92vw;padding:20px 22px;}" +
+      "#via-nasxl-dialog .via-nasxl-title{font-size:12px;letter-spacing:.14em;margin-bottom:12px;}" +
+      "#via-nasxl-dialog .via-nasxl-label{display:block;color:#77766f;font-size:11px;letter-spacing:.1em;margin:10px 0 4px;}" +
+      "#via-nasxl-dialog .via-nasxl-row{display:flex;gap:8px;}" +
+      "#via-nasxl-dialog .via-nasxl-input{flex:1;width:100%;box-sizing:border-box;background:transparent;border:1px solid #1c1b19;" +
+      "border-radius:0;color:#1c1b19;font:inherit;padding:7px 9px;}" +
+      "#via-nasxl-dialog .via-nasxl-hint{color:#77766f;font-size:11px;min-height:4px;white-space:pre-line;}" +
+      "#via-nasxl-dialog .via-nasxl-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;}" +
+      "#via-nasxl-dialog .via-nasxl-dbtn{background:transparent;border:1px solid #1c1b19;border-radius:0;color:#1c1b19;" +
+      "cursor:pointer;font:inherit;padding:6px 14px;}" +
+      "#via-nasxl-dialog .via-nasxl-dbtn.is-primary{background:#1c1b19;color:#f3f2ee;}" +
+      "#via-nasxl-dialog .via-nasxl-dbtn:disabled{opacity:.5;cursor:wait;}" +
       "#via-missav-magnets .via-m-name{display:block;font-size:14px;color:#ebcb8b;word-break:break-all;}" +
       "#via-missav-magnets .via-m-tag{display:inline-block;margin-left:.5em;padding:0 .45em;border-radius:4px;" +
       "font-size:12px;color:#fff;background:#bf616a;vertical-align:baseline;}" +
@@ -4548,6 +4546,7 @@
     var wrap;
     var sheet;
     var head;
+    var setup;
     var back;
     var i;
     if (!items.length) {
@@ -4571,7 +4570,17 @@
     sheet.className = "via-m-sheet";
     head = document.createElement("div");
     head.className = "via-m-head";
-    head.textContent = "磁力下载（点击复制链接）";
+    head.appendChild(document.createTextNode("磁力下载"));
+    setup = document.createElement("button");
+    setup.type = "button";
+    setup.className = "via-m-setup";
+    setup.textContent = "NAS 设置";
+    setup.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      nasSettings();
+    });
+    head.appendChild(setup);
     sheet.appendChild(head);
     for (i = 0; i < items.length; i++) {
       sheet.appendChild(magnetItem(items[i]));
@@ -4583,14 +4592,15 @@
   }
 
   function magnetItem(item) {
-    var btn = document.createElement("button");
+    var row = document.createElement("div");
+    var info = document.createElement("div");
     var name = document.createElement("span");
     var meta = document.createElement("span");
     var parts = [];
     var i;
     var tag;
-    btn.type = "button";
-    btn.className = "via-m-item";
+    row.className = "via-m-item";
+    info.className = "via-m-info";
     name.className = "via-m-name";
     name.appendChild(document.createTextNode(item.name));
     for (i = 0; i < item.tags.length; i++) {
@@ -4603,20 +4613,11 @@
     if (item.size) parts.push(item.size);
     if (item.date) parts.push(item.date);
     meta.textContent = parts.join("  ·  ");
-    btn.appendChild(name);
-    if (parts.length) btn.appendChild(meta);
-    btn.addEventListener("click", function (event) {
-      event.preventDefault();
-      event.stopPropagation();
-      copyText(item.href)
-        .then(function () {
-          toast("已复制磁力链接");
-        })
-        .catch(function () {
-          toast("复制失败，请长按选择文本", true);
-        });
-    });
-    return btn;
+    info.appendChild(name);
+    if (parts.length) info.appendChild(meta);
+    row.appendChild(info);
+    row.appendChild(nasButton(item.href));
+    return row;
   }
 
   function magnetEntry(node) {
@@ -4660,6 +4661,622 @@
       },
       true
     );
+  }
+
+  /* ---- NAS 迅雷：直接调用迅雷网页用的接口提交任务（规则同 bts_web_tool） ---- */
+
+  var NAS_PORT = 2345;
+  var NAS_PATH = "/webman/3rdparty/pan-xunlei-com/index.cgi/";
+  var NAS_IPS = ["10.10.10.10", "10.144.0.1"];
+  var NAS_FOLDER = "迅雷测试";
+  var NAS_CFG_KEY = "nas_cfg";
+  var NAS_BTN_TEXT = "Download To Nas";
+  var NAS_VIDEO_EXT = "mp4 mkv avi wmv mov flv ts m2ts mts rmvb rm mpg mpeg m4v webm 3gp vob asf f4v ogv divx".split(" ");
+  /* 迅雷「新建下载任务」窗口默认不勾选这些扩展名 */
+  var NAS_UNCHECKED_EXT = ["txt", "url", "nfo", "lnk"];
+  var NAS_MIN_VIDEO_RATIO = 0.45;
+  var NAS_SMALL_ALL_BYTES = 50 * 1024 * 1024;
+  var NAS_SMALL_VIDEO_RATIO = 0.1;
+  var NAS_SESSION_MS = 10 * 60 * 1000;
+  var nasSession = null;
+
+  function nasError(message, kind) {
+    var err = new Error(message);
+    err.kind = kind || "";
+    return err;
+  }
+
+  function nasGetCfg() {
+    var raw = "";
+    var cfg = {};
+    try {
+      if (typeof GM_getValue === "function") raw = GM_getValue(NAS_CFG_KEY, "");
+    } catch (e) {}
+    if (!raw) {
+      try {
+        raw = window.localStorage.getItem("via-missav-" + NAS_CFG_KEY) || "";
+      } catch (e2) {}
+    }
+    try {
+      cfg = (typeof raw === "string" ? JSON.parse(raw || "{}") : raw) || {};
+    } catch (e3) {
+      cfg = {};
+    }
+    return { ip: cfg.ip || "", user: cfg.user || "", pass: cfg.pass || "" };
+  }
+
+  function nasSaveCfg(cfg) {
+    var raw = JSON.stringify({ ip: cfg.ip || "", user: cfg.user || "", pass: cfg.pass || "" });
+    try {
+      if (typeof GM_setValue === "function") GM_setValue(NAS_CFG_KEY, raw);
+    } catch (e) {}
+    try {
+      window.localStorage.setItem("via-missav-" + NAS_CFG_KEY, raw);
+    } catch (e2) {}
+    nasSession = null;
+  }
+
+  function nasBase(ip) {
+    var host = String(ip || "").trim();
+    if (host.indexOf(":") !== -1 && host.charAt(0) !== "[") host = "[" + host + "]";
+    return "http://" + host + ":" + NAS_PORT + NAS_PATH;
+  }
+
+  function nasAuth(cfg) {
+    return "Basic " + window.btoa(unescape(encodeURIComponent(cfg.user + ":" + cfg.pass)));
+  }
+
+  function nasHttp(method, url, headers, body, timeout) {
+    return new Promise(function (resolve, reject) {
+      var gm = null;
+      var host = url.split("/")[2] || url;
+      if (typeof GM_xmlhttpRequest === "function") gm = GM_xmlhttpRequest;
+      else if (typeof GM !== "undefined" && GM && typeof GM.xmlHttpRequest === "function") gm = GM.xmlHttpRequest;
+      if (!gm) {
+        reject(nasError("当前浏览器的脚本不支持跨域请求（GM_xmlhttpRequest），无法连接 NAS"));
+        return;
+      }
+      try {
+        gm({
+          method: method,
+          url: url,
+          headers: headers || {},
+          data: body || undefined,
+          timeout: timeout || 15000,
+          anonymous: true,
+          onload: function (r) {
+            resolve({ status: r.status, text: r.responseText || "" });
+          },
+          onerror: function () {
+            reject(nasError("无法连接 NAS（" + host + "）", "net"));
+          },
+          ontimeout: function () {
+            reject(nasError("连接 NAS 超时（" + host + "）", "net"));
+          }
+        });
+      } catch (e) {
+        reject(nasError(String((e && e.message) || e)));
+      }
+    });
+  }
+
+  function nasApi(cfg, s, method, path, body) {
+    var url = nasBase(cfg.ip) + path + (path.indexOf("?") === -1 ? "?" : "&") +
+      "pan_auth=" + encodeURIComponent(s.token) + "&device_space=";
+    return nasHttp(
+      method,
+      url,
+      {
+        Authorization: nasAuth(cfg),
+        "pan-auth": s.token,
+        "Device-Space": "",
+        "Content-Type": "application/json"
+      },
+      body ? JSON.stringify(body) : null,
+      20000
+    ).then(function (r) {
+      var data = null;
+      try {
+        data = JSON.parse(r.text);
+      } catch (e) {}
+      if (r.status === 401) throw nasError("NAS 迅雷账号或密码错误（HTTP 401）", "auth");
+      if (r.status < 200 || r.status >= 300 || !data) {
+        throw nasError((data && (data.error_description || data.error)) || "NAS 迅雷接口返回 HTTP " + r.status);
+      }
+      return data;
+    });
+  }
+
+  function nasProbe(ip) {
+    var started = Date.now();
+    return nasHttp("GET", nasBase(ip), {}, null, 2500).then(
+      function () {
+        return { ip: ip, ok: true, ms: Date.now() - started };
+      },
+      function () {
+        return { ip: ip, ok: false, ms: 0 };
+      }
+    );
+  }
+
+  /* 并发探测候选 IP，挑延迟最低且连得上的 */
+  function nasDetect() {
+    return Promise.all(NAS_IPS.map(nasProbe)).then(function (results) {
+      var ok = results.filter(function (r) {
+        return r.ok;
+      }).sort(function (a, b) {
+        return a.ms - b.ms;
+      });
+      return { best: ok.length ? ok[0].ip : "", results: results };
+    });
+  }
+
+  function nasDetectText(results) {
+    return results.map(function (r) {
+      return r.ip + (r.ok ? "  " + r.ms + "ms" : "  不通");
+    }).join("\n");
+  }
+
+  /* 令牌写在迅雷首页的 uiauth() 里；设备 id 来自 device/info/watch；下载目录必须是「迅雷测试」 */
+  function nasOpen(cfg) {
+    var key = cfg.ip + "|" + cfg.user + "|" + cfg.pass;
+    var s;
+    if (nasSession && nasSession.key === key && Date.now() - nasSession.at < NAS_SESSION_MS) {
+      return Promise.resolve(nasSession);
+    }
+    s = { key: key, at: Date.now(), token: "", target: "", folder: null };
+    return nasHttp("GET", nasBase(cfg.ip), { Authorization: nasAuth(cfg) }, null, 10000)
+      .then(function (r) {
+        var m;
+        if (r.status === 401) throw nasError("NAS 迅雷账号或密码错误（HTTP 401）", "auth");
+        m = /uiauth\(value\)\s*\{\s*return\s*"([^"]+)"/.exec(r.text || "");
+        if (!m) throw nasError("没有在 NAS 迅雷页面里找到接口令牌（HTTP " + r.status + "）");
+        s.token = m[1];
+        return nasApi(cfg, s, "POST", "device/info/watch", {});
+      })
+      .then(function (info) {
+        s.target = (info && info.target) || "";
+        if (!s.target) throw nasError("NAS 迅雷没有返回设备信息，可能还没有登录迅雷账号");
+        return nasApi(
+          cfg,
+          s,
+          "GET",
+          "drive/v1/files?space=" + encodeURIComponent(s.target) + "&limit=200&parent_id=&filters=" +
+            encodeURIComponent(JSON.stringify({ kind: { eq: "drive#folder" } }))
+        );
+      })
+      .then(function (data) {
+        var files = (data && data.files) || [];
+        var i;
+        for (i = 0; i < files.length; i++) {
+          if (files[i].name === NAS_FOLDER) {
+            s.folder = {
+              id: files[i].id,
+              path: (files[i].params && files[i].params.RealPath) || "/" + NAS_FOLDER + "/"
+            };
+            break;
+          }
+        }
+        if (!s.folder) throw nasError("NAS 迅雷里没有「" + NAS_FOLDER + "」下载目录，已停止");
+        nasSession = s;
+        return s;
+      });
+  }
+
+  function nasHash(magnet) {
+    var m = /btih:([0-9a-z]+)/i.exec(magnet || "");
+    var alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+    var bits = "";
+    var hex = "";
+    var v;
+    var i;
+    if (!m) return "";
+    v = m[1].toLowerCase();
+    if (/^[0-9a-f]{40}$/.test(v)) return v;
+    if (!/^[a-z2-7]{32}$/.test(v)) return "";
+    for (i = 0; i < 32; i++) bits += ("00000" + alphabet.indexOf(v.charAt(i)).toString(2)).slice(-5);
+    for (i = 0; i < 160; i += 4) hex += parseInt(bits.substr(i, 4), 2).toString(16);
+    return hex;
+  }
+
+  function nasFindTask(cfg, s, hash) {
+    var filters = JSON.stringify({
+      phase: { in: "PHASE_TYPE_PENDING,PHASE_TYPE_RUNNING,PHASE_TYPE_PAUSED,PHASE_TYPE_ERROR,PHASE_TYPE_COMPLETE" },
+      type: { in: "user#download-url,user#download" }
+    });
+    function page(token, n) {
+      return nasApi(
+        cfg,
+        s,
+        "GET",
+        "drive/v1/tasks?space=" + encodeURIComponent(s.target) + "&limit=100&page_token=" +
+          encodeURIComponent(token) + "&filters=" + encodeURIComponent(filters)
+      ).then(function (data) {
+        var tasks = (data && data.tasks) || [];
+        var i;
+        var p;
+        var h;
+        for (i = 0; i < tasks.length; i++) {
+          p = tasks[i].params || {};
+          h = String(p.info_hash || "").toLowerCase() || nasHash(p.url);
+          if (h && h === hash) return tasks[i];
+        }
+        if (data && data.next_page_token && n < 10) return page(data.next_page_token, n + 1);
+        return null;
+      });
+    }
+    return page("", 0);
+  }
+
+  function nasTaskProgress(task) {
+    if (task.phase === "PHASE_TYPE_COMPLETE") return "已完成";
+    if (task.phase === "PHASE_TYPE_PAUSED") return "已暂停 " + (task.progress || 0) + "%";
+    if (task.phase === "PHASE_TYPE_ERROR") return "出错（" + (task.message || "未知") + "）";
+    return (task.progress || 0) + "%";
+  }
+
+  /* 根目录的子文件超过一页时，按 list_id 继续拉取 */
+  function nasFillDir(cfg, s, listId, node, n) {
+    var token = node.dir && node.dir.next_page_token;
+    if (!token || n > 50) return Promise.resolve();
+    return nasApi(cfg, s, "GET", "drive/v1/resource/list/" + listId + "?page_token=" + encodeURIComponent(token)).then(
+      function (d) {
+        var list = (d && d.list) || {};
+        node.dir.resources = (node.dir.resources || []).concat(list.resources || []);
+        node.dir.next_page_token = list.next_page_token || "";
+        return nasFillDir(cfg, s, listId, node, n + 1);
+      }
+    );
+  }
+
+  function nasResource(cfg, s, magnet) {
+    return nasApi(cfg, s, "POST", "drive/v1/resource/list", { urls: magnet }).then(function (data) {
+      var root = data && data.list && data.list.resources && data.list.resources[0];
+      if (!root) throw nasError("NAS 迅雷解析不出这个磁力（可能没有种子源）");
+      return nasFillDir(cfg, s, data.list_id, root, 0).then(function () {
+        return root;
+      });
+    });
+  }
+
+  function nasExt(name) {
+    var m = /\.([A-Za-z0-9]+)$/.exec(name || "");
+    return m ? m[1].toLowerCase() : "";
+  }
+
+  function nasLeaves(node, out) {
+    var kids;
+    var i;
+    if (node.is_dir) {
+      kids = (node.dir && node.dir.resources) || [];
+      for (i = 0; i < kids.length; i++) nasLeaves(kids[i], out);
+      return out;
+    }
+    out.push({
+      name: node.name || "",
+      index: node.file_index || 0,
+      bytes: Number(node.file_size) || 0,
+      ext: nasExt(node.name)
+    });
+    return out;
+  }
+
+  function nasBytes(n) {
+    if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GB";
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+    return Math.max(1, Math.round(n / 1024)) + " KB";
+  }
+
+  function nasSum(list) {
+    return list.reduce(function (sum, l) {
+      return sum + l.bytes;
+    }, 0);
+  }
+
+  /*
+   * 只下载视频：只看迅雷默认勾选的文件；视频体积不足默认勾选总大小的 45% 则不下载；
+   * 视频都小于 50MB 时下载默认勾选的全部文件；否则排除非视频和不足最大视频 10% 的广告小片。
+   */
+  function nasPick(root) {
+    var leaves = nasLeaves(root, []);
+    var checked = leaves.filter(function (l) {
+      return NAS_UNCHECKED_EXT.indexOf(l.ext) === -1;
+    });
+    var videos = checked.filter(function (l) {
+      return NAS_VIDEO_EXT.indexOf(l.ext) !== -1;
+    });
+    var total = nasSum(checked);
+    var videoBytes = nasSum(videos);
+    var ratio = total > 0 ? videoBytes / total : 0;
+    var maxVideo;
+    var keep;
+    if (root.is_dir && root.file_count && leaves.length < root.file_count) {
+      return { error: "文件列表不完整（读到 " + leaves.length + " / " + root.file_count + " 个），已停止（未下载）" };
+    }
+    if (!videos.length) return { skip: "默认勾选的文件里没有视频" };
+    if (ratio < NAS_MIN_VIDEO_RATIO) {
+      return {
+        skip: "视频 " + nasBytes(videoBytes) + "，仅占默认勾选总大小 " + nasBytes(total) + " 的 " +
+          (ratio * 100).toFixed(1) + "%（要求 ≥ " + Math.round(NAS_MIN_VIDEO_RATIO * 100) + "%）"
+      };
+    }
+    maxVideo = Math.max.apply(null, videos.map(function (v) {
+      return v.bytes;
+    }));
+    if (maxVideo < NAS_SMALL_ALL_BYTES) {
+      return { keep: checked, all: true, total: leaves.length, line: "视频都小于 50MB，已下载默认勾选的全部 " + checked.length + " 个文件" };
+    }
+    keep = videos.filter(function (v) {
+      return v.bytes >= maxVideo * NAS_SMALL_VIDEO_RATIO;
+    });
+    return {
+      keep: keep,
+      total: leaves.length,
+      line: "仅下载视频 " + keep.length + " 个（" + nasBytes(nasSum(keep)) + "，占默认勾选 " + (ratio * 100).toFixed(1) + "%）" +
+        (checked.length - keep.length ? "，已排除 " + (checked.length - keep.length) + " 个非视频或小广告片" : "")
+    };
+  }
+
+  function nasCreate(cfg, s, magnet, root, pick) {
+    var name = String(root.name || "").replace(/[\r\n]+/g, "").trim() || "unnamed";
+    var body = {
+      type: "user#download-url",
+      name: name,
+      file_name: name,
+      file_size: String(nasSum(pick.keep)),
+      space: s.target,
+      params: {
+        target: s.target,
+        url: magnet,
+        total_file_count: String(root.file_count || pick.total || 1),
+        parent_folder_id: s.folder.id,
+        parent_folder_path: s.folder.path,
+        sub_file_index: pick.keep.map(function (l) {
+          return l.index;
+        }).join(","),
+        mime_type: "",
+        file_id: ""
+      }
+    };
+    if (!root.is_dir) delete body.params.sub_file_index;
+    return nasApi(cfg, s, "POST", "drive/v1/task", body).then(function (data) {
+      if (data && data.task) return data.task;
+      if (data && data.error === "task_daily_create_limit") throw nasError("今天的迅雷免费下载任务数已用完");
+      throw nasError((data && (data.error_description || data.error)) || "NAS 迅雷没有创建任务");
+    });
+  }
+
+  /* 返回 {status: ok|exists|skipped, message, task} */
+  function nasSubmit(cfg, magnet) {
+    var hash = nasHash(magnet);
+    var s;
+    var root;
+    var pick;
+    if (!hash) return Promise.reject(nasError("磁力链接里没有 btih 哈希"));
+    return nasOpen(cfg)
+      .then(function (session) {
+        s = session;
+        return nasFindTask(cfg, s, hash);
+      })
+      .then(function (task) {
+        if (task) return { status: "exists", task: task, message: "已有该任务：" + task.name + "，当前进度 " + nasTaskProgress(task) };
+        return nasResource(cfg, s, magnet).then(function (r) {
+          root = r;
+          pick = nasPick(root);
+          if (pick.error) throw nasError(pick.error);
+          if (pick.skip) return { status: "skipped", message: "已跳过，未下载\n" + pick.skip };
+          return nasCreate(cfg, s, magnet, root, pick).then(function (created) {
+            return { status: "ok", task: created, message: "NAS迅雷正在下载\n" + pick.line };
+          });
+        });
+      })
+      .catch(function (err) {
+        if (err && err.kind === "auth") nasSession = null;
+        throw err;
+      });
+  }
+
+  function nasSetBusy(btn, busy) {
+    window.clearInterval(btn._nasTick);
+    if (busy) {
+      var since = Date.now();
+      btn.disabled = true;
+      btn.setAttribute("data-state", "loading");
+      btn._nasTick = window.setInterval(function () {
+        btn.textContent = "等待 NAS 响应… " + ((Date.now() - since) / 1000).toFixed(1) + "s";
+      }, 100);
+      btn.textContent = "等待 NAS 响应… 0.0s";
+      return;
+    }
+    btn.disabled = false;
+    btn.removeAttribute("data-state");
+    btn.textContent = NAS_BTN_TEXT;
+  }
+
+  function nasClick(btn, magnet) {
+    var cfg = nasGetCfg();
+    var started = Date.now();
+    var ready;
+    if (btn.disabled) return;
+    if (!cfg.user || !cfg.pass) {
+      toast("请先设置 NAS 迅雷的账号和密码", true);
+      nasSettings();
+      return;
+    }
+    nasSetBusy(btn, true);
+    if (cfg.ip) {
+      ready = Promise.resolve(cfg);
+    } else {
+      ready = nasDetect().then(function (d) {
+        if (!d.best) {
+          throw nasError("没有检测到可连通的 NAS（已尝试 " + NAS_IPS.join("、") + "），请长按按钮手动设置 IP\n" + nasDetectText(d.results));
+        }
+        cfg.ip = d.best;
+        nasSaveCfg(cfg);
+        return cfg;
+      });
+    }
+    ready
+      .then(function (c) {
+        return nasSubmit(c, magnet);
+      })
+      .then(function (res) {
+        var secs = ((Date.now() - started) / 1000).toFixed(1);
+        nasSetBusy(btn, false);
+        if (res.status === "ok") {
+          btn.setAttribute("data-state", "ok");
+          btn.textContent = "NAS迅雷正在下载 · " + secs + "s";
+          toast(res.message + "\n用时 " + secs + " 秒", false, 6000);
+        } else if (res.status === "exists") {
+          btn.setAttribute("data-state", "ok");
+          btn.textContent = "已在 NAS 迅雷中";
+          toast(res.message, false, 6000);
+        } else {
+          toast(res.message, true, 8000);
+        }
+      })
+      .catch(function (err) {
+        nasSetBusy(btn, false);
+        toast("NAS下载失败\n" + ((err && err.message) || err), true, 9000);
+        if (err && err.kind === "auth") nasSettings();
+      });
+  }
+
+  function nasButton(magnet) {
+    var btn = document.createElement("button");
+    var pressTimer = 0;
+    var longPressed = false;
+    btn.type = "button";
+    btn.className = "via-nasxl-btn";
+    btn.textContent = NAS_BTN_TEXT;
+    btn.title = "点击：下载到 NAS 迅雷；长按：设置";
+    function endPress() {
+      window.clearTimeout(pressTimer);
+    }
+    btn.addEventListener("touchstart", function () {
+      longPressed = false;
+      endPress();
+      pressTimer = window.setTimeout(function () {
+        longPressed = true;
+        nasSettings();
+      }, 650);
+    }, { passive: true });
+    btn.addEventListener("touchend", endPress);
+    btn.addEventListener("touchmove", endPress);
+    btn.addEventListener("touchcancel", endPress);
+    btn.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!longPressed) nasSettings();
+    });
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (longPressed) {
+        longPressed = false;
+        return;
+      }
+      nasClick(btn, magnet);
+    });
+    return btn;
+  }
+
+  function nasSettings() {
+    var cfg = nasGetCfg();
+    var wrap;
+    var box;
+    var forceSave = false;
+    if (document.getElementById("via-nasxl-dialog")) return;
+    ensureStyles();
+    wrap = document.createElement("div");
+    wrap.id = "via-nasxl-dialog";
+    wrap.setAttribute("data-via-missav-keep", "1");
+    box = document.createElement("div");
+    box.className = "via-nasxl-box";
+    box.innerHTML =
+      '<div class="via-nasxl-title">NAS 迅雷设置</div>' +
+      '<label class="via-nasxl-label">NAS IP</label>' +
+      '<div class="via-nasxl-row"><input class="via-nasxl-input" data-f="ip" placeholder="留空则自动检测延迟最低的 IP" autocomplete="off">' +
+      '<button type="button" class="via-nasxl-dbtn" data-a="detect">检测</button></div>' +
+      '<div class="via-nasxl-hint" data-r="detect"></div>' +
+      '<label class="via-nasxl-label">账号</label>' +
+      '<input class="via-nasxl-input" data-f="user" autocomplete="off">' +
+      '<label class="via-nasxl-label">密码</label>' +
+      '<input class="via-nasxl-input" data-f="pass" type="password" autocomplete="new-password">' +
+      '<div class="via-nasxl-hint" data-r="verify"></div>' +
+      '<div class="via-nasxl-actions"><button type="button" class="via-nasxl-dbtn" data-a="cancel">取消</button>' +
+      '<button type="button" class="via-nasxl-dbtn is-primary" data-a="save">验证并保存</button></div>';
+    wrap.appendChild(box);
+    (document.body || document.documentElement).appendChild(wrap);
+
+    function field(name) {
+      return box.querySelector('[data-f="' + name + '"]');
+    }
+    function hint(name) {
+      return box.querySelector('[data-r="' + name + '"]');
+    }
+    function close() {
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    }
+    function detect() {
+      hint("detect").textContent = "检测中…";
+      return nasDetect().then(function (d) {
+        hint("detect").textContent = nasDetectText(d.results);
+        if (d.best) field("ip").value = d.best;
+        return d.best;
+      });
+    }
+    field("ip").value = cfg.ip;
+    field("user").value = cfg.user;
+    field("pass").value = cfg.pass;
+
+    wrap.addEventListener("click", function (event) {
+      var action = event.target && event.target.getAttribute ? event.target.getAttribute("data-a") : "";
+      var saveBtn = box.querySelector('[data-a="save"]');
+      var next;
+      event.stopPropagation();
+      if (event.target === wrap) {
+        close();
+        return;
+      }
+      if (!action) return;
+      event.preventDefault();
+      if (action === "cancel") {
+        close();
+        return;
+      }
+      if (action === "detect") {
+        detect();
+        return;
+      }
+      next = { ip: field("ip").value.trim(), user: field("user").value.trim(), pass: field("pass").value };
+      if (forceSave) {
+        nasSaveCfg(next);
+        close();
+        toast("NAS 设置已保存：" + (next.ip || "未设置 IP"));
+        return;
+      }
+      saveBtn.disabled = true;
+      (next.ip ? Promise.resolve(next.ip) : detect())
+        .then(function (ip) {
+          if (!ip) throw nasError("没有检测到可连通的 NAS，请手动填写 IP");
+          next.ip = ip;
+          hint("verify").textContent = "验证账号中…";
+          nasSession = null;
+          return nasOpen(next);
+        })
+        .then(function () {
+          nasSaveCfg(next);
+          close();
+          toast("NAS 设置已保存：" + next.ip);
+        })
+        .catch(function (err) {
+          hint("verify").textContent = "验证失败：" + ((err && err.message) || err) + "。再次点击将仍然保存。";
+          saveBtn.textContent = "仍然保存";
+          saveBtn.disabled = false;
+          forceSave = true;
+        });
+    });
   }
 
   function parentGap(el) {
